@@ -147,6 +147,26 @@ func GetLineage(g *graph.Graph, branch string) []string {
 	return result
 }
 
+// GetAncestors returns the ancestor chain from root to the given branch, excluding descendants.
+func GetAncestors(g *graph.Graph, branch string) []string {
+	ancestors := []string{}
+	current := branch
+	for current != "" && current != g.Root {
+		ancestors = append([]string{current}, ancestors...)
+		if b, exists := g.GetBranch(current); exists {
+			current = b.Parent
+		} else {
+			break
+		}
+	}
+	if branch != g.Root {
+		ancestors = append([]string{g.Root}, ancestors...)
+	} else {
+		ancestors = []string{g.Root}
+	}
+	return ancestors
+}
+
 // IsBranchAtTip checks if a branch has no children (is at the tip of its lineage)
 func IsBranchAtTip(g *graph.Graph, branch string) bool {
 	children := g.GetChildren(branch)

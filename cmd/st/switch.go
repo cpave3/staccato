@@ -27,6 +27,7 @@ func (i branchItem) FilterValue() string { return i.name }
 // switchTUI is the Bubble Tea model for the switch command
 type switchTUI struct {
 	list        list.Model
+	branches    []branchItem // Store branches separately for index-based access
 	git         *git.Runner
 	graph       *graph.Graph
 	current     string
@@ -118,8 +119,10 @@ func (s switchTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.updateMatches()
 			return s, nil
 		case "enter":
-			if i, ok := s.list.SelectedItem().(branchItem); ok {
-				s.selected = i.name
+			// Use index instead of type assertion (Bubble Tea list doesn't preserve custom types)
+			idx := s.list.Index()
+			if idx >= 0 && idx < len(s.branches) {
+				s.selected = s.branches[idx].name
 				s.quitting = true
 				return s, tea.Quit
 			}
@@ -266,6 +269,7 @@ Use arrow keys to navigate, / to search, n/N to jump between matches, enter to s
 			}
 
 			// Build list items recursively
+			var branchItems []branchItem
 			var items []list.Item
 
 			var addBranch func(branch string, depth int)
@@ -278,12 +282,14 @@ Use arrow keys to navigate, / to search, n/N to jump between matches, enter to s
 					parent = b.Parent
 				}
 
-				items = append(items, branchItem{
+				bi := branchItem{
 					name:    branch,
 					parent:  parent,
 					depth:   depth,
 					current: isCurrent,
-				})
+				}
+				branchItems = append(branchItems, bi)
+				items = append(items, bi)
 
 				// Add children
 				children := g.GetChildren(branch)
@@ -315,10 +321,11 @@ Use arrow keys to navigate, / to search, n/N to jump between matches, enter to s
 
 			// Create model
 			model := &switchTUI{
-				list:    l,
-				git:     gitRunner,
-				graph:   g,
-				current: currentBranch,
+				list:     l,
+				branches: branchItems,
+				git:      gitRunner,
+				graph:    g,
+				current:  currentBranch,
 			}
 
 			// Run the TUI
@@ -329,7 +336,7 @@ Use arrow keys to navigate, / to search, n/N to jump between matches, enter to s
 			}
 
 			// Handle result
-			if m, ok := finalModel.(*switchTUI); ok && m.selected != "" {
+			if m, ok := finalModel.(switchTUI); ok && m.selected != "" {
 				if m.selected == currentBranch {
 					fmt.Printf("Already on '%s'\n", m.selected)
 				} else {

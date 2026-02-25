@@ -86,9 +86,10 @@ The `st attach` and `st switch` commands launch interactive TUIs with vim-like n
 - Restore from backup if restack fails
 - Cycle detection prevents invalid stack structures
 
-### Lazy Attachment
+### Lazy Attachment (Recursive)
 - Retrofit existing manually-created branches
-- Suggests parent candidates based on merge-base
+- Shows ALL branches as potential parents (tracked or untracked)
+- **Recursive attachment**: After selecting m3's parent (m2), it prompts for m2's parent, and so on until reaching root
 - Never rewrites history during attachment
 - Interactive TUI mode for visual parent selection
 

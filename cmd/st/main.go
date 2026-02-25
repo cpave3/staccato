@@ -97,8 +97,10 @@ func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.updateMatches()
 			return a, nil
 		case "enter":
-			if i, ok := a.list.SelectedItem().(attachCandidate); ok {
-				a.selected = i.name
+			// Use index instead of type assertion (Bubble Tea list doesn't preserve custom types)
+			idx := a.list.Index()
+			if idx >= 0 && idx < len(a.candidates) {
+				a.selected = a.candidates[idx].name
 				a.quitting = true
 				return a, tea.Quit
 			}
@@ -205,9 +207,15 @@ func init() {
 	rootCmd = &cobra.Command{
 		Use:   "st",
 		Short: "A deterministic, offline-first Git stack management CLI",
-		Long: `st is a Git stack management tool inspired by Graphite and Git Town.
+		Long: `		
+ ███████╗ ████████╗  █████╗   ██████╗  ██████╗  █████╗  ████████╗  ██████╗
+ ██╔════╝ ╚══██╔══╝ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗ ╚══██╔══╝ ██╔═══██╗
+ ███████╗    ██║    ███████║ ██║      ██║      ███████║    ██║    ██║   ██║
+ ╚════██║    ██║    ██╔══██║ ██║      ██║      ██╔══██║    ██║    ██║   ██║
+ ███████║    ██║    ██║  ██║ ╚██████╗ ╚██████╗ ██║  ██║    ██║    ╚██████╔╝
+ ╚══════╝    ╚═╝    ╚═╝  ╚═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝    ╚═╝     ╚═════╝
 		
-It provides branch-level stacking with deterministic restacking, automatic backups,
+Staccato provides branch-level stacking with deterministic restacking, automatic backups,
 and lazy attachment for retrofitting existing branches.`,
 	}
 
@@ -224,6 +232,7 @@ and lazy attachment for retrofitting existing branches.`,
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(logCmd())
 	rootCmd.AddCommand(switchCmdFunc())
+	rootCmd.AddCommand(backupCmd())
 }
 
 // getContext loads the graph and git runner for commands
@@ -417,7 +426,6 @@ The current branch and all downstream branches will be reparented and restacked.
 
 			engine := restack.NewEngine(git, backupMgr)
 			result, err := engine.Restack(g, branchName)
-
 			if err != nil {
 				if result.Conflicts {
 					printer.ConflictDetected(result.ConflictsAt)
@@ -444,7 +452,8 @@ The current branch and all downstream branches will be reparented and restacked.
 }
 
 func restackCmd() *cobra.Command {
-	return &cobra.Command{
+	var toCurrent bool
+	cmd := &cobra.Command{
 		Use:   "restack",
 		Short: "Restack the entire stack",
 		Long: `Rebases all branches in the stack onto their parents in topological order.
@@ -476,9 +485,13 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 
 			// Check if we're at the tip
 			if !restack.IsBranchAtTip(g, currentBranch) {
-				printer.Warning("You are not at the tip of your stack lineage")
-				printer.Println("  Restacking will affect %d branches in your lineage", len(lineageBranches))
-				printer.Println("  To restack only up to current, use: st restack --to-current")
+				if !toCurrent {
+					printer.Warning("You are not at the tip of your stack lineage")
+					printer.Println("  Use --to-current to restack only up to '%s'", currentBranch)
+					printer.Println("  Or switch to the tip branch and run 'st restack'")
+					return fmt.Errorf("specify --to-current or switch to the tip branch")
+				}
+				lineageBranches = restack.GetAncestors(g, currentBranch)
 			}
 
 			printer.RestackStart(currentBranch)
@@ -516,6 +529,8 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&toCurrent, "to-current", false, "Restack only up to the current branch")
+	return cmd
 }
 
 func continueCmd() *cobra.Command {
@@ -570,6 +585,96 @@ func continueCmd() *cobra.Command {
 	}
 }
 
+// attachRecursively attaches a branch and continues up the chain until reaching root or tracked branch
+func attachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string) error {
+	// Check if already in graph
+	if attacher.IsBranchInGraph(g, branchToAttach) {
+		return nil // Already attached, stop recursion
+	}
+
+	currentBranch, _ := gitRunner.GetCurrentBranch()
+	var candidates []attachCandidate
+
+	// Get ALL branches from git (not just those in graph)
+	allBranches, err := gitRunner.GetAllBranches()
+	if err != nil {
+		return fmt.Errorf("failed to list branches: %w", err)
+	}
+
+	// Add all branches as candidates
+	seen := make(map[string]bool)
+	for _, name := range allBranches {
+		if name == branchToAttach {
+			continue // Don't include the branch being attached
+		}
+		if !seen[name] {
+			seen[name] = true
+			candidates = append(candidates, attachCandidate{
+				name:      name,
+				isCurrent: name == currentBranch,
+			})
+		}
+	}
+
+	if len(candidates) == 0 {
+		return fmt.Errorf("no existing branches to use as parent for '%s'", branchToAttach)
+	}
+
+	// Create list items
+	var items []list.Item
+	for _, c := range candidates {
+		items = append(items, c)
+	}
+
+	// Create list
+	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l.SetShowHelp(false)
+	l.SetShowFilter(false)
+	l.SetShowStatusBar(false)
+	l.SetShowTitle(false)
+
+	// Create model
+	model := &attachTUI{
+		list:           l,
+		git:            gitRunner,
+		graph:          g,
+		branchToAttach: branchToAttach,
+		candidates:     candidates,
+	}
+
+	// Run TUI
+	p := tea.NewProgram(model)
+	finalModel, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("error running attach: %w", err)
+	}
+
+	// Handle result
+	if m, ok := finalModel.(attachTUI); ok && m.selected != "" {
+		// RECURSIVE STEP: If the selected parent isn't in the graph yet, attach it first
+		if !attacher.IsBranchInGraph(g, m.selected) && m.selected != g.Root {
+			fmt.Printf("\nParent '%s' is not yet in the stack. Attaching it first...\n", m.selected)
+			if err := attachRecursively(g, gitRunner, repoPath, attacher, m.selected); err != nil {
+				return fmt.Errorf("failed to attach parent '%s': %w", m.selected, err)
+			}
+		}
+
+		// Attach the branch (parent is now guaranteed to be in the graph)
+		err := attacher.AttachBranch(g, branchToAttach, m.selected)
+		if err != nil {
+			return fmt.Errorf("failed to attach branch: %w", err)
+		}
+
+		if err := saveContext(g, repoPath); err != nil {
+			return fmt.Errorf("failed to save graph: %w", err)
+		}
+
+		fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, m.selected)
+	}
+
+	return nil
+}
+
 func attachCmd() *cobra.Command {
 	var autoSelect bool
 
@@ -595,12 +700,6 @@ Opens an interactive TUI to select the parent branch (use --auto to skip TUI).`,
 
 			attacher := attach.NewAttacher(gitRunner, nil)
 
-			// Check if already in graph
-			if attacher.IsBranchInGraph(g, branchToAttach) {
-				fmt.Printf("Branch '%s' is already in the stack\n", branchToAttach)
-				return nil
-			}
-
 			// If --auto flag is set, use auto-attach mode
 			if autoSelect {
 				err = attacher.AutoAttach(g, branchToAttach, true)
@@ -613,81 +712,8 @@ Opens an interactive TUI to select the parent branch (use --auto to skip TUI).`,
 				return nil
 			}
 
-			// Interactive TUI mode
-			currentBranch, _ := gitRunner.GetCurrentBranch()
-			var candidates []attachCandidate
-
-			// Get ALL branches from git (not just those in graph)
-			allBranches, err := gitRunner.GetAllBranches()
-			if err != nil {
-				return fmt.Errorf("failed to list branches: %w", err)
-			}
-
-			// Add all branches as candidates
-			seen := make(map[string]bool)
-			for _, name := range allBranches {
-				if name == branchToAttach {
-					continue // Don't include the branch being attached
-				}
-				if !seen[name] {
-					seen[name] = true
-					candidates = append(candidates, attachCandidate{
-						name:      name,
-						isCurrent: name == currentBranch,
-					})
-				}
-			}
-
-			if len(candidates) == 0 {
-				return fmt.Errorf("no existing branches to use as parent")
-			}
-
-			// Create list items
-			var items []list.Item
-			for _, c := range candidates {
-				items = append(items, c)
-			}
-
-			// Create list
-			l := list.New(items, list.NewDefaultDelegate(), 0, 0)
-			l.SetShowHelp(false)
-			l.SetShowFilter(false)
-			l.SetShowStatusBar(false)
-			l.SetShowTitle(false)
-
-			// Create model
-			model := &attachTUI{
-				list:           l,
-				git:            gitRunner,
-				graph:          g,
-				branchToAttach: branchToAttach,
-				candidates:     candidates,
-			}
-
-			// Run TUI
-			p := tea.NewProgram(model)
-			finalModel, err := p.Run()
-			if err != nil {
-				return fmt.Errorf("error running attach: %w", err)
-			}
-
-			// Handle result
-			if m, ok := finalModel.(*attachTUI); ok && m.selected != "" {
-				// Attach the branch
-				err := attacher.AttachBranch(g, branchToAttach, m.selected)
-				if err != nil {
-					return fmt.Errorf("failed to attach branch: %w", err)
-				}
-
-				// Save graph
-				if err := saveContext(g, repoPath); err != nil {
-					return fmt.Errorf("failed to save graph: %w", err)
-				}
-
-				fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, m.selected)
-			}
-
-			return nil
+			// Interactive TUI mode with recursive attachment
+			return attachRecursively(g, gitRunner, repoPath, attacher, branchToAttach)
 		},
 	}
 
@@ -828,6 +854,43 @@ This is an offline-first tool, so push is always explicit.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be pushed without pushing")
 
 	return cmd
+}
+
+func backupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "backup",
+		Short: "Create a manual backup of all stack branches",
+		Long: `Creates a manual snapshot of every branch in the stack (excluding the root).
+Unlike automatic backups created during restack/insert, manual backups persist
+until you delete them. Backup branches are named backups/<timestamp>/<branch>.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			g, gitRunner, printer, repoPath, err := getContext()
+			if err != nil {
+				return err
+			}
+
+			// Collect branch names excluding root
+			var branches []string
+			for name := range g.Branches {
+				if name != g.Root {
+					branches = append(branches, name)
+				}
+			}
+
+			if len(branches) == 0 {
+				return fmt.Errorf("no branches in the stack to backup")
+			}
+
+			backupMgr := backup.NewManager(gitRunner, repoPath)
+			timestamp, err := backupMgr.CreateManualBackup(branches)
+			if err != nil {
+				return fmt.Errorf("backup failed: %w", err)
+			}
+
+			printer.Info("Backup created: %s (%d branches)", timestamp, len(branches))
+			return nil
+		},
+	}
 }
 
 func logCmd() *cobra.Command {

@@ -225,6 +225,24 @@ func (m *Manager) extractTimestamp(backupName string) int64 {
 	return ts
 }
 
+// CreateManualBackup creates a manual snapshot of the given branches.
+// Unlike automatic backups, manual backups use the "backups/" prefix (plural)
+// and are not auto-deleted on success.
+// Returns the timestamp label used in the backup branch names.
+func (m *Manager) CreateManualBackup(branches []string) (string, error) {
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+
+	for _, branch := range branches {
+		backupName := fmt.Sprintf("backups/%s/%s", timestamp, branch)
+		err := m.git.CopyBranch(branch, backupName)
+		if err != nil {
+			return timestamp, fmt.Errorf("failed to backup branch %s: %w", branch, err)
+		}
+	}
+
+	return timestamp, nil
+}
+
 // GetBackupPath returns the default path for storing backup metadata
 func GetBackupPath(repoPath string) string {
 	return filepath.Join(repoPath, ".git", "stack", "backups")
