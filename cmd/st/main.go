@@ -1004,8 +1004,67 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				return fmt.Errorf("fetch failed: %w", err)
 			}
 
-			// 3. Fast-forward trunk
+			// 3. Fetch with read-only detection for dry-run
 			trunk := g.Root
+
+			if dryRun {
+				// Dry-run: only report what would happen, no local modifications
+				if gitRunner.RemoteBranchExists(trunk) {
+					// Check if trunk is behind remote
+					isAnc, err := gitRunner.IsAncestor(trunk, "origin/"+trunk)
+					if err == nil && isAnc {
+						behindTrunk, _ := gitRunner.IsAncestor("origin/"+trunk, trunk)
+						if !behindTrunk {
+							printer.Info("Would fast-forward '%s'", trunk)
+						}
+					}
+				}
+
+				// Detect merged branches
+				sorted, err := restack.TopologicalSort(g, trunk)
+				if err != nil {
+					return fmt.Errorf("failed to sort branches: %w", err)
+				}
+
+				var mergedBranches []string
+				for _, branch := range sorted {
+					merged := false
+					isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
+					if err == nil && isAnc {
+						merged = true
+					}
+					if !merged && !gitRunner.RemoteBranchExists(branch) {
+						diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
+						if err == nil && diffEmpty {
+							merged = true
+						}
+					}
+					if merged {
+						mergedBranches = append(mergedBranches, branch)
+						printer.Info("Would remove merged branch: %s", branch)
+					}
+				}
+
+				if len(mergedBranches) > 0 {
+					printer.Info("Would restack remaining branches")
+				}
+
+				// Report what would be pushed
+				remaining := restack.GetLineage(g, originalBranch)
+				if !downOnly {
+					for _, branch := range remaining {
+						if branch == trunk {
+							continue
+						}
+						printer.Info("Would push: %s", branch)
+					}
+				}
+
+				printer.SyncComplete(len(remaining)-1, dryRun)
+				return nil
+			}
+
+			// 3. Fast-forward trunk
 			if gitRunner.RemoteBranchExists(trunk) {
 				if originalBranch == trunk {
 					if err := gitRunner.MergeFFOnly("origin/" + trunk); err != nil {
@@ -1103,24 +1162,20 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				saveContext(g, repoPath)
 			}
 
-			// 8. Push remaining branches (force-with-lease since they may have been rebased)
-			remaining := restack.GetStackBranches(g, trunk)
+			// 8. Push remaining branches in current lineage (force-with-lease since they may have been rebased)
+			remaining := restack.GetLineage(g, originalBranch)
 			pushedCount := 0
 			if !downOnly {
 				for _, branch := range remaining {
 					if branch == trunk {
 						continue
 					}
-					if dryRun {
-						printer.Info("Would push: %s", branch)
+					forceNeeded := true
+					if err := gitRunner.Push(branch, forceNeeded); err != nil {
+						printer.Error("Failed to push %s: %v", branch, err)
 					} else {
-						forceNeeded := true
-						if err := gitRunner.Push(branch, forceNeeded); err != nil {
-							printer.Error("Failed to push %s: %v", branch, err)
-						} else {
-							printer.Info("Pushed: %s", branch)
-							pushedCount++
-						}
+						printer.Info("Pushed: %s", branch)
+						pushedCount++
 					}
 				}
 			}
@@ -1134,11 +1189,7 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 			}
 
 			// 10. Print summary
-			if dryRun {
-				printer.SyncComplete(len(remaining)-1, dryRun)
-			} else {
-				printer.SyncSummary(len(mergedBranches), restackedCount, pushedCount)
-			}
+			printer.SyncSummary(len(mergedBranches), restackedCount, pushedCount)
 
 			return nil
 		},

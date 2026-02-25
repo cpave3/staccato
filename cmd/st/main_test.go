@@ -737,17 +737,69 @@ func TestRestore(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSync(t *testing.T) {
-	t.Run("dry_run_lists_branches", func(t *testing.T) {
-		repo, _ := setupRepoWithStack(t)
+	t.Run("dry_run_does_not_push", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
 		if err := repo.AddRemote(); err != nil {
 			t.Fatalf("AddRemote: %v", err)
 		}
+		repo.RunGit("push", "-u", "origin", root)
+
 		runSt(t, "new", "f1")
 		repo.CreateFile("f1.txt", "f1")
 		repo.AddAndCommit("f1 commit")
 
 		out := runSt(t, "-v", "sync", "--dry-run")
+		assertContains(t, out, "Would push")
 		assertContains(t, out, "f1")
+
+		// f1 should NOT have been pushed
+		remoteOut, _ := repo.RunGit("ls-remote", "--heads", "origin", "f1")
+		if strings.TrimSpace(remoteOut) != "" {
+			t.Error("f1 should NOT have been pushed with --dry-run")
+		}
+	})
+
+	t.Run("dry_run_does_not_modify_local_branches", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		if err := repo.AddRemote(); err != nil {
+			t.Fatalf("AddRemote: %v", err)
+		}
+		repo.RunGit("push", "-u", "origin", root)
+
+		// Create stack: root -> m1
+		runSt(t, "new", "m1")
+		repo.CreateFile("m1.txt", "m1")
+		repo.AddAndCommit("m1 commit")
+		repo.RunGit("push", "origin", "m1")
+
+		// Simulate m1 merged: fast-forward origin/trunk to include m1
+		originDir := repo.OriginDir()
+		m1SHA, _ := repo.RunGit("rev-parse", "m1")
+		runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m1SHA)
+		runGitInDir(t, originDir, "branch", "-D", "m1")
+
+		// Record state before dry-run
+		m1SHABefore, _ := repo.RunGit("rev-parse", "m1")
+
+		// Run sync --dry-run
+		out := runSt(t, "-v", "sync", "--dry-run")
+		assertContains(t, out, "Would remove merged branch")
+
+		// m1 local branch should still exist (not deleted)
+		if !repo.BranchExists("m1") {
+			t.Error("m1 should still exist after --dry-run (no local modifications)")
+		}
+
+		// m1 SHA should be unchanged
+		m1SHAAfter, _ := repo.RunGit("rev-parse", "m1")
+		if m1SHAAfter != m1SHABefore {
+			t.Error("m1 SHA should be unchanged after --dry-run")
+		}
+
+		// Graph should still contain m1 (not removed)
+		if !graphContains(t, repo, "m1") {
+			t.Error("m1 should still be in graph after --dry-run")
+		}
 	})
 
 	t.Run("error_no_remote", func(t *testing.T) {
@@ -1170,6 +1222,55 @@ func TestSyncDown(t *testing.T) {
 	out, _ := repo.RunGit("ls-remote", "--heads", "origin", "d1")
 	if strings.TrimSpace(out) != "" {
 		t.Error("d1 should NOT have been pushed to origin with --down flag")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncOnlyPushesCurrentLineage
+// ---------------------------------------------------------------------------
+
+func TestSyncOnlyPushesCurrentLineage(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create two independent stacks off root:
+	// root -> stack-a1 -> stack-a2
+	// root -> stack-b1
+	runSt(t, "new", "stack-a1")
+	repo.CreateFile("a1.txt", "a1")
+	repo.AddAndCommit("a1 commit")
+	runSt(t, "append", "stack-a2")
+	repo.CreateFile("a2.txt", "a2")
+	repo.AddAndCommit("a2 commit")
+
+	repo.Checkout(root)
+	runSt(t, "new", "stack-b1")
+	repo.CreateFile("b1.txt", "b1")
+	repo.AddAndCommit("b1 commit")
+
+	// Sync from stack-a2 — only stack-a1 and stack-a2 should be pushed
+	repo.Checkout("stack-a2")
+	runSt(t, "-v", "sync")
+
+	// stack-a1 should have been pushed
+	outA1, _ := repo.RunGit("ls-remote", "--heads", "origin", "stack-a1")
+	if strings.TrimSpace(outA1) == "" {
+		t.Error("stack-a1 should have been pushed")
+	}
+
+	// stack-a2 should have been pushed
+	outA2, _ := repo.RunGit("ls-remote", "--heads", "origin", "stack-a2")
+	if strings.TrimSpace(outA2) == "" {
+		t.Error("stack-a2 should have been pushed")
+	}
+
+	// stack-b1 should NOT have been pushed — it's a different lineage
+	outB1, _ := repo.RunGit("ls-remote", "--heads", "origin", "stack-b1")
+	if strings.TrimSpace(outB1) != "" {
+		t.Error("stack-b1 should NOT have been pushed — it's not in the current lineage")
 	}
 }
 
