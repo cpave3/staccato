@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/user/st/pkg/attach"
 	"github.com/user/st/pkg/backup"
+	"github.com/user/st/pkg/forge"
 	"github.com/user/st/pkg/git"
 	"github.com/user/st/pkg/graph"
 	"github.com/user/st/pkg/output"
@@ -258,6 +259,7 @@ func init() {
 	rootCmd.AddCommand(logCmd())
 	rootCmd.AddCommand(switchCmdFunc())
 	rootCmd.AddCommand(backupCmd())
+	rootCmd.AddCommand(prCmd())
 }
 
 // getContext loads the graph and git runner for commands
@@ -1145,4 +1147,86 @@ func logCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func prCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "pr",
+		Short: "Interact with pull requests",
+		Long:  "Commands for creating and viewing pull requests on your hosting provider.",
+	}
+	cmd.AddCommand(prMakeCmd())
+	cmd.AddCommand(prViewCmd())
+	return cmd
+}
+
+func prMakeCmd() *cobra.Command {
+	var web bool
+
+	cmd := &cobra.Command{
+		Use:   "make",
+		Short: "Create a PR for the current branch",
+		Long: `Creates a pull request targeting the parent branch in the stack.
+This ensures PRs in a stack are chained correctly.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			g, gitRunner, _, _, err := getContext()
+			if err != nil {
+				return err
+			}
+
+			currentBranch, err := gitRunner.GetCurrentBranch()
+			if err != nil {
+				return fmt.Errorf("failed to get current branch: %w", err)
+			}
+
+			// Look up parent in the stack graph
+			branchInfo, exists := g.GetBranch(currentBranch)
+			if !exists {
+				return fmt.Errorf("branch '%s' is not in the stack — run 'st attach' first", currentBranch)
+			}
+			parent := branchInfo.Parent
+
+			f, err := forge.DetectForge(gitRunner)
+			if err != nil {
+				return err
+			}
+
+			return f.CreatePR(forge.PRCreateOpts{
+				Head: currentBranch,
+				Base: parent,
+				Web:  web,
+			})
+		},
+	}
+
+	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open in browser")
+	return cmd
+}
+
+func prViewCmd() *cobra.Command {
+	var web bool
+
+	cmd := &cobra.Command{
+		Use:   "view",
+		Short: "View the PR for the current branch",
+		Long:  "Shows the pull request associated with the current branch.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, gitRunner, _, _, err := getContext()
+			if err != nil {
+				return err
+			}
+
+			f, err := forge.DetectForge(gitRunner)
+			if err != nil {
+				return err
+			}
+
+			return f.ViewPR(forge.PRViewOpts{
+				Web: web,
+			})
+		},
+	}
+
+	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open in browser")
+	return cmd
 }

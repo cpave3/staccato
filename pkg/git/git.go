@@ -230,6 +230,11 @@ func (r *Runner) CopyBranch(source, destination string) error {
 	return err
 }
 
+// GetRemoteURL returns the URL of the named remote
+func (r *Runner) GetRemoteURL(name string) (string, error) {
+	return r.Run("remote", "get-url", name)
+}
+
 // GetAllBranches returns all local branch names
 func (r *Runner) GetAllBranches() ([]string, error) {
 	output, err := r.Run("branch", "--format=%(refname:short)")
