@@ -1055,7 +1055,7 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 					if dryRun {
 						printer.Info("Would push: %s", branch)
 					} else {
-						forceNeeded := len(mergedBranches) > 0
+						forceNeeded := true
 						if err := gitRunner.Push(branch, forceNeeded); err != nil {
 							printer.Error("Failed to push %s: %v", branch, err)
 						} else {

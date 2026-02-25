@@ -11,7 +11,7 @@ import (
 func TestGitRunner_Run(t *testing.T) {
 	// Create a temp git repo
 	tmpDir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -31,7 +31,7 @@ func TestGitRunner_Run(t *testing.T) {
 
 func TestGitRunner_GetCurrentBranch(t *testing.T) {
 	tmpDir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -62,7 +62,7 @@ func TestGitRunner_GetCurrentBranch(t *testing.T) {
 
 func TestGitRunner_CreateBranch(t *testing.T) {
 	tmpDir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -92,7 +92,7 @@ func TestGitRunner_CreateBranch(t *testing.T) {
 
 func TestGitRunner_GetCommitSHA(t *testing.T) {
 	tmpDir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -120,7 +120,7 @@ func TestGitRunner_GetCommitSHA(t *testing.T) {
 
 func TestGitRunner_EnableRerere(t *testing.T) {
 	tmpDir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -142,7 +142,7 @@ func TestGitRunner_EnableRerere(t *testing.T) {
 
 func TestGitRunner_GetMergeBase(t *testing.T) {
 	tmpDir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
