@@ -466,6 +466,77 @@ func TestAttach(t *testing.T) {
 			t.Error("quitting should be true")
 		}
 	})
+
+	t.Run("relocates_already_attached_branch", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create two branches off root
+		runSt(t, "new", "tests")
+		repo.CreateFile("tests.txt", "tests content")
+		repo.AddAndCommit("tests commit")
+
+		// Go back to root and create m1 off root
+		repo.Checkout(root)
+		runSt(t, "new", "m1")
+		repo.CreateFile("m1.txt", "m1 content")
+		repo.AddAndCommit("m1 commit")
+
+		// m1 parent should be root
+		g := loadGraph(t, repo)
+		if g.Branches["m1"].Parent != root {
+			t.Fatalf("m1 parent = %q, want %q", g.Branches["m1"].Parent, root)
+		}
+
+		// Relocate m1 under tests
+		runSt(t, "attach", "m1", "--parent", "tests")
+
+		// m1 parent should now be tests
+		g = loadGraph(t, repo)
+		if g.Branches["m1"].Parent != "tests" {
+			t.Errorf("after relocate, m1 parent = %q, want tests", g.Branches["m1"].Parent)
+		}
+
+		// m1 should have tests.txt (rebased onto tests)
+		repo.Checkout("m1")
+		if _, err := os.Stat(filepath.Join(repo.Dir, "tests.txt")); os.IsNotExist(err) {
+			t.Error("m1 should have tests.txt after rebase onto tests")
+		}
+	})
+
+	t.Run("relocate_same_parent_is_noop", func(t *testing.T) {
+		_, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "m1")
+
+		// Attach m1 to same parent (root) — should succeed without error
+		out := runSt(t, "attach", "m1", "--parent", root)
+		assertContains(t, out, "already has parent")
+	})
+
+	t.Run("attach_with_parent_flag", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create a tracked branch first so the graph is initialized
+		runSt(t, "new", "f1")
+		repo.Checkout(root)
+
+		// Create an untracked branch manually
+		repo.CreateBranch("manual-branch")
+		repo.CreateFile("manual.txt", "manual")
+		repo.AddAndCommit("manual commit")
+
+		// Attach with --parent flag (skip TUI)
+		runSt(t, "attach", "manual-branch", "--parent", root)
+
+		if !graphContains(t, repo, "manual-branch") {
+			t.Error("manual-branch should be in graph after attach --parent")
+		}
+
+		g := loadGraph(t, repo)
+		if g.Branches["manual-branch"].Parent != root {
+			t.Errorf("manual-branch parent = %q, want %q", g.Branches["manual-branch"].Parent, root)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +596,251 @@ func TestSync(t *testing.T) {
 		out := runStExpectError(t, "sync")
 		assertContains(t, out, "no remote")
 	})
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncDetectsRegularMerge
+// ---------------------------------------------------------------------------
+
+func TestSyncDetectsRegularMerge(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+
+	// Push main to origin so origin/main exists
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: main -> m1 -> m2
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1")
+	repo.AddAndCommit("m1 commit")
+	runSt(t, "append", "m2")
+	repo.CreateFile("m2.txt", "m2")
+	repo.AddAndCommit("m2 commit")
+
+	// Push m1 to origin
+	repo.RunGit("push", "origin", "m1")
+
+	// Simulate regular merge: fast-forward origin/main to include m1,
+	// then delete origin/m1
+	originDir := repo.OriginDir()
+	m1SHA, _ := repo.RunGit("rev-parse", "m1")
+	// Update origin's trunk to m1's commit (simulating a merge)
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m1SHA)
+	// Delete origin/m1
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// Run sync
+	repo.Checkout("m2")
+	out := runSt(t, "-v", "sync")
+
+	// m1 should be removed from graph
+	if graphContains(t, repo, "m1") {
+		t.Error("m1 should have been removed from graph")
+	}
+
+	// m2 should still exist with parent = root
+	g := loadGraph(t, repo)
+	m2, ok := g.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph")
+	}
+	if m2.Parent != root {
+		t.Errorf("m2 parent = %q, want %q", m2.Parent, root)
+	}
+
+	// m1 local branch should be deleted
+	if repo.BranchExists("m1") {
+		t.Error("m1 local branch should have been deleted")
+	}
+
+	assertContains(t, out, "Merged")
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncDetectsSquashMerge
+// ---------------------------------------------------------------------------
+
+func TestSyncDetectsSquashMerge(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: main -> m1
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1 content")
+	repo.AddAndCommit("m1 commit")
+
+	// Push m1
+	repo.RunGit("push", "origin", "m1")
+
+	// Simulate squash merge: cherry-pick m1 changes onto main in origin,
+	// then delete origin/m1
+	originDir := repo.OriginDir()
+
+	// Go back to main, cherry-pick m1's changes as a new commit
+	repo.Checkout(root)
+	repo.RunGit("cherry-pick", "m1")
+	// Push this new main to origin
+	repo.RunGit("push", "origin", root)
+	// Delete origin/m1 (simulating GitHub deleting the branch after squash merge)
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// Run sync
+	out := runSt(t, "-v", "sync")
+
+	// m1 should be removed
+	if graphContains(t, repo, "m1") {
+		t.Error("m1 should have been removed from graph after squash merge detection")
+	}
+	if repo.BranchExists("m1") {
+		t.Error("m1 local branch should have been deleted")
+	}
+
+	assertContains(t, out, "Merged")
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncMultipleMergedBranches
+// ---------------------------------------------------------------------------
+
+func TestSyncMultipleMergedBranches(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: main -> m1 -> m2 -> m3
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1")
+	repo.AddAndCommit("m1 commit")
+	runSt(t, "append", "m2")
+	repo.CreateFile("m2.txt", "m2")
+	repo.AddAndCommit("m2 commit")
+	runSt(t, "append", "m3")
+	repo.CreateFile("m3.txt", "m3")
+	repo.AddAndCommit("m3 commit")
+
+	// Push m1 and m2
+	repo.RunGit("push", "origin", "m1")
+	repo.RunGit("push", "origin", "m2")
+
+	// Simulate both m1 and m2 merged: fast-forward origin/trunk to m2
+	originDir := repo.OriginDir()
+	m2SHA, _ := repo.RunGit("rev-parse", "m2")
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m2SHA)
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+	runGitInDir(t, originDir, "branch", "-D", "m2")
+
+	// Run sync from m3
+	repo.Checkout("m3")
+	runSt(t, "-v", "sync")
+
+	// m1 and m2 should be gone
+	g := loadGraph(t, repo)
+	if _, ok := g.Branches["m1"]; ok {
+		t.Error("m1 should have been removed")
+	}
+	if _, ok := g.Branches["m2"]; ok {
+		t.Error("m2 should have been removed")
+	}
+
+	// m3 should be reparented to root
+	m3, ok := g.Branches["m3"]
+	if !ok {
+		t.Fatal("m3 should still be in graph")
+	}
+	if m3.Parent != root {
+		t.Errorf("m3 parent = %q, want %q", m3.Parent, root)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncSkipsUnpushedBranches
+// ---------------------------------------------------------------------------
+
+func TestSyncSkipsUnpushedBranches(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create m1 with unique content — never push it
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1-unique.txt", "unique content that is NOT on main")
+	repo.AddAndCommit("m1 commit")
+
+	// Run sync
+	runSt(t, "-v", "sync")
+
+	// m1 should still be in graph (not removed — it was never pushed
+	// and has unique content not on main)
+	if !graphContains(t, repo, "m1") {
+		t.Error("m1 should NOT have been removed — it was never pushed and has unique diff")
+	}
+	if !repo.BranchExists("m1") {
+		t.Error("m1 local branch should still exist")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncUserOnMergedBranch
+// ---------------------------------------------------------------------------
+
+func TestSyncUserOnMergedBranch(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create m1
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1")
+	repo.AddAndCommit("m1 commit")
+
+	// Push m1
+	repo.RunGit("push", "origin", "m1")
+
+	// Simulate merge
+	originDir := repo.OriginDir()
+	m1SHA, _ := repo.RunGit("rev-parse", "m1")
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m1SHA)
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// Stay on m1 (the merged branch)
+	repo.Checkout("m1")
+
+	// Run sync
+	runSt(t, "-v", "sync")
+
+	// Should end up on trunk
+	cur := getCurrentBranch(t, repo)
+	if cur != root {
+		t.Errorf("current branch = %q, want %q (trunk)", cur, root)
+	}
+
+	// m1 should be gone
+	if repo.BranchExists("m1") {
+		t.Error("m1 should have been deleted")
+	}
+}
+
+// runGitInDir runs a git command in a specific directory (for bare repo manipulation)
+func runGitInDir(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s failed: %v\nOutput: %s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // ---------------------------------------------------------------------------
@@ -664,4 +980,35 @@ func TestBackup(t *testing.T) {
 		out := runStExpectError(t, "backup")
 		assertContains(t, out, "no branches")
 	})
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncDown
+// ---------------------------------------------------------------------------
+
+func TestSyncDown(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create branch with a commit
+	runSt(t, "new", "d1")
+	repo.CreateFile("d1.txt", "d1")
+	repo.AddAndCommit("d1 commit")
+
+	// Run sync --down
+	runSt(t, "-v", "sync", "--down")
+
+	// d1 should still be in graph
+	if !graphContains(t, repo, "d1") {
+		t.Error("d1 should still be in graph")
+	}
+
+	// d1 should NOT have been pushed to origin
+	out, _ := repo.RunGit("ls-remote", "--heads", "origin", "d1")
+	if strings.TrimSpace(out) != "" {
+		t.Error("d1 should NOT have been pushed to origin with --down flag")
+	}
 }
