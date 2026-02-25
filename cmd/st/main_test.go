@@ -1020,6 +1020,7 @@ func TestSyncDown(t *testing.T) {
 func TestPR(t *testing.T) {
 	t.Run("make_errors_when_branch_not_in_stack", func(t *testing.T) {
 		repo, _ := setupRepoWithStack(t)
+		repo.RunGit("remote", "add", "origin", "https://github.com/user/repo.git")
 		repo.CreateBranch("untracked")
 		out := runStExpectError(t, "pr", "make")
 		assertContains(t, out, "not in the stack")
@@ -1035,7 +1036,6 @@ func TestPR(t *testing.T) {
 	t.Run("make_errors_for_unsupported_forge", func(t *testing.T) {
 		repo, _ := setupRepoWithStack(t)
 		runSt(t, "new", "f1")
-		// Add a non-GitHub remote
 		repo.RunGit("remote", "add", "origin", "https://gitlab.com/user/repo.git")
 		out := runStExpectError(t, "pr", "make")
 		assertContains(t, out, "forge not supported")

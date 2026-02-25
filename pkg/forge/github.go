@@ -6,8 +6,8 @@ import (
 	"os/exec"
 )
 
-// GitHubForge implements Forge using the gh CLI.
-type GitHubForge struct{}
+// GitHub implements Forge using the gh CLI.
+type GitHub struct{}
 
 func checkGH() error {
 	if _, err := exec.LookPath("gh"); err != nil {
@@ -16,7 +16,7 @@ func checkGH() error {
 	return nil
 }
 
-func (g *GitHubForge) CreatePR(opts PRCreateOpts) error {
+func (g *GitHub) CreatePR(opts PRCreateOpts) error {
 	if err := checkGH(); err != nil {
 		return err
 	}
@@ -33,7 +33,7 @@ func (g *GitHubForge) CreatePR(opts PRCreateOpts) error {
 	return cmd.Run()
 }
 
-func (g *GitHubForge) ViewPR(opts PRViewOpts) error {
+func (g *GitHub) ViewPR(opts PRViewOpts) error {
 	if err := checkGH(); err != nil {
 		return err
 	}
