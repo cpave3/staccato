@@ -1010,12 +1010,11 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 			if dryRun {
 				// Dry-run: only report what would happen, no local modifications
 				if gitRunner.RemoteBranchExists(trunk) {
-					// Check if trunk is behind remote
 					isAnc, err := gitRunner.IsAncestor(trunk, "origin/"+trunk)
 					if err == nil && isAnc {
 						behindTrunk, _ := gitRunner.IsAncestor("origin/"+trunk, trunk)
 						if !behindTrunk {
-							printer.Info("Would fast-forward '%s'", trunk)
+							fmt.Printf("Would fast-forward '%s'\n", trunk)
 						}
 					}
 				}
@@ -1041,26 +1040,31 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 					}
 					if merged {
 						mergedBranches = append(mergedBranches, branch)
-						printer.Info("Would remove merged branch: %s", branch)
+						fmt.Printf("Would remove merged branch: %s\n", branch)
 					}
 				}
 
 				if len(mergedBranches) > 0 {
-					printer.Info("Would restack remaining branches")
+					fmt.Println("Would restack remaining branches")
 				}
 
 				// Report what would be pushed
 				remaining := restack.GetLineage(g, originalBranch)
+				pushCount := 0
 				if !downOnly {
 					for _, branch := range remaining {
 						if branch == trunk {
 							continue
 						}
-						printer.Info("Would push: %s", branch)
+						fmt.Printf("Would push: %s\n", branch)
+						pushCount++
 					}
 				}
 
-				printer.SyncComplete(len(remaining)-1, dryRun)
+				if pushCount == 0 && len(mergedBranches) == 0 {
+					fmt.Println("Nothing to do.")
+				}
+
 				return nil
 			}
 

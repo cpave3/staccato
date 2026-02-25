@@ -748,7 +748,8 @@ func TestSync(t *testing.T) {
 		repo.CreateFile("f1.txt", "f1")
 		repo.AddAndCommit("f1 commit")
 
-		out := runSt(t, "-v", "sync", "--dry-run")
+		// dry-run output should be visible WITHOUT -v flag
+		out := runSt(t, "sync", "--dry-run")
 		assertContains(t, out, "Would push")
 		assertContains(t, out, "f1")
 
@@ -781,8 +782,8 @@ func TestSync(t *testing.T) {
 		// Record state before dry-run
 		m1SHABefore, _ := repo.RunGit("rev-parse", "m1")
 
-		// Run sync --dry-run
-		out := runSt(t, "-v", "sync", "--dry-run")
+		// Run sync --dry-run — output should be visible WITHOUT -v flag
+		out := runSt(t, "sync", "--dry-run")
 		assertContains(t, out, "Would remove merged branch")
 
 		// m1 local branch should still exist (not deleted)
