@@ -43,9 +43,12 @@ func NewGitRepo() (*GitRepo, error) {
 	return repo, nil
 }
 
-// Cleanup removes the temporary repository
+// Cleanup removes the temporary repository and any associated origin
 func (r *GitRepo) Cleanup() {
 	os.RemoveAll(r.Dir)
+	if r.origin != "" {
+		os.RemoveAll(r.origin)
+	}
 }
 
 // runGit runs a git command in the repo directory
@@ -128,6 +131,50 @@ func (r *GitRepo) BranchExists(name string) bool {
 	cmd.Env = r.gitEnv()
 	err := cmd.Run()
 	return err == nil
+}
+
+// HeadSHA returns the current HEAD SHA trimmed
+func (r *GitRepo) HeadSHA() string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = r.Dir
+	cmd.Env = r.gitEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// AddRemote creates a bare repo in a temp dir and adds it as "origin"
+func (r *GitRepo) AddRemote() error {
+	bareDir, err := os.MkdirTemp("", "st-bare-*")
+	if err != nil {
+		return fmt.Errorf("failed to create bare dir: %w", err)
+	}
+	r.origin = bareDir
+
+	cmd := exec.Command("git", "init", "--bare", bareDir)
+	cmd.Env = r.gitEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to init bare repo: %w\nOutput: %s", err, out)
+	}
+
+	return r.runGit("remote", "add", "origin", bareDir)
+}
+
+// FileExists checks if a file exists in the working tree
+func (r *GitRepo) FileExists(filename string) bool {
+	_, err := os.Stat(filepath.Join(r.Dir, filename))
+	return err == nil
+}
+
+// WriteFile writes a file without staging it
+func (r *GitRepo) WriteFile(filename, content string) error {
+	path := filepath.Join(r.Dir, filename)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 // InitStack initializes a stack graph for testing

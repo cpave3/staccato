@@ -1,404 +1,667 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/user/st/internal/testutil"
+	"github.com/user/st/pkg/graph"
 )
 
-// stBinaryPath is the path to the compiled st binary
-var stBinaryPath = "/var/home/cameron/Projects/restack/st"
+// stBinary holds the path to the compiled binary, built once in TestMain.
+var stBinary string
 
-// TestRecursiveAttach verifies that attach walks back the entire chain
-func TestRecursiveAttach(t *testing.T) {
-	// Build the binary
-	buildCmd := exec.Command("go", "build", "-o", stBinaryPath, "./cmd/st/")
-	buildCmd.Dir = "/var/home/cameron/Projects/restack"
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to build st: %v\nOutput: %s", err, output)
-	}
-
-	repo, err := testutil.NewGitRepo()
+func TestMain(m *testing.M) {
+	tmp, err := os.CreateTemp("", "st-bin-*")
 	if err != nil {
-		t.Fatalf("Failed to create test repo: %v", err)
+		panic(err)
 	}
-	defer repo.Cleanup()
+	tmp.Close()
+	stBinary = tmp.Name()
 
-	oldWd, _ := os.Getwd()
-	os.Chdir(repo.Dir)
-	defer os.Chdir(oldWd)
-
-	// Setup: Create initial commit
-	if err := repo.InitStack(); err != nil {
-		t.Fatalf("Failed to init stack: %v", err)
+	build := exec.Command("go", "build", "-o", stBinary, "./cmd/st/")
+	build.Dir = filepath.Join(mustGetwd(), "..", "..")
+	if out, err := build.CombinedOutput(); err != nil {
+		panic("build failed: " + string(out))
 	}
 
-	rootBranch := getCurrentBranchName(repo)
-
-	// Step 1: Create m1 with st (tracked)
-	cmd := exec.Command(stBinaryPath, "new", "m1")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("st new m1 failed: %v\nOutput: %s", err, output)
-	}
-
-	// Step 2: Create m2 manually (untracked)
-	if err := repo.Checkout(rootBranch); err != nil {
-		t.Fatalf("Failed to checkout root: %v", err)
-	}
-	if err := repo.CreateBranch("m2"); err != nil {
-		t.Fatalf("Failed to create m2: %v", err)
-	}
-	if err := repo.CreateFile("m2.txt", "m2 content"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.AddAndCommit("m2 commit"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Step 3: Create m3 manually (untracked) - this is the one we'll attach
-	if err := repo.CreateBranch("m3"); err != nil {
-		t.Fatalf("Failed to create m3: %v", err)
-	}
-	if err := repo.CreateFile("m3.txt", "m3 content"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.AddAndCommit("m3 commit"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify current state: m3 and m2 are NOT in graph
-	stackDir := filepath.Join(repo.Dir, ".git", "stack")
-	content, _ := os.ReadFile(filepath.Join(stackDir, "graph.json"))
-	if strings.Contains(string(content), "m2") {
-		t.Error("m2 should not be in graph initially")
-	}
-	if strings.Contains(string(content), "m3") {
-		t.Error("m3 should not be in graph initially")
-	}
-
-	// Test passes - this is the expected state before recursive attach
-	t.Log("✓ Setup complete: m1 tracked, m2 and m3 untracked")
+	code := m.Run()
+	os.Remove(stBinary)
+	os.Exit(code)
 }
 
-// TestNewCommand tests the 'st new' command
-func TestNewCommand(t *testing.T) {
-	// Build the binary first
-	buildCmd := exec.Command("go", "build", "-o", stBinaryPath, "./cmd/st/")
-	buildCmd.Dir = "/var/home/cameron/Projects/restack"
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to build st: %v\nOutput: %s", err, output)
-	}
-
-	// Create isolated git repo
-	repo, err := testutil.NewGitRepo()
+func mustGetwd() string {
+	wd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("Failed to create test repo: %v", err)
+		panic(err)
 	}
-	defer repo.Cleanup()
-
-	// Change to repo directory
-	oldWd, _ := os.Getwd()
-	os.Chdir(repo.Dir)
-	defer os.Chdir(oldWd)
-
-	// Initialize stack with initial commit
-	if err := repo.InitStack(); err != nil {
-		t.Fatalf("Failed to init stack: %v", err)
-	}
-
-	// Run 'st new feature-1'
-	cmd := exec.Command(stBinaryPath, "new", "feature-1")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("st new failed: %v\nOutput: %s", err, output)
-	}
-
-	// Verify branch was created
-	if !repo.BranchExists("feature-1") {
-		t.Error("Branch 'feature-1' was not created")
-	}
-
-	// Verify graph file exists and contains the branch
-	graphPath := filepath.Join(repo.Dir, ".git", "stack", "graph.json")
-	if _, err := os.Stat(graphPath); os.IsNotExist(err) {
-		t.Error("Graph file was not created")
-	}
-
-	// Read graph and verify branch is in it
-	content, err := os.ReadFile(graphPath)
-	if err != nil {
-		t.Fatalf("Failed to read graph: %v", err)
-	}
-	if !strings.Contains(string(content), "feature-1") {
-		t.Error("Graph doesn't contain 'feature-1'")
-	}
-
-	// Verify we're still on the new branch
-	current, _ := repo.CurrentBranch()
-	if !strings.Contains(current, "feature-1") {
-		t.Errorf("Expected to be on 'feature-1', got '%s'", current)
-	}
-
-	t.Logf("✓ st new created branch and updated graph\nOutput: %s", output)
+	return wd
 }
 
-// TestAppendCommand tests the 'st append' command
-func TestAppendCommand(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// setupRepo creates a temp git repo and chdir into it.
+func setupRepo(t *testing.T) *testutil.GitRepo {
+	t.Helper()
 	repo, err := testutil.NewGitRepo()
 	if err != nil {
-		t.Fatalf("Failed to create test repo: %v", err)
+		t.Fatalf("NewGitRepo: %v", err)
 	}
-	defer repo.Cleanup()
-
 	oldWd, _ := os.Getwd()
-	os.Chdir(repo.Dir)
-	defer os.Chdir(oldWd)
-
-	// Setup: Create initial commit and feature-1
-	if err := repo.InitStack(); err != nil {
-		t.Fatalf("Failed to init stack: %v", err)
+	if err := os.Chdir(repo.Dir); err != nil {
+		t.Fatalf("chdir: %v", err)
 	}
-
-	// Create feature-1 branch and graph entry manually
-	if err := repo.CreateBranch("feature-1"); err != nil {
-		t.Fatalf("Failed to create feature-1: %v", err)
-	}
-	if err := repo.CreateFile("feature1.txt", "content"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.AddAndCommit("Feature 1 commit"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create graph manually
-	graphContent := `{"version":1,"root":"main","branches":{"feature-1":{"name":"feature-1","parent":"main","base_sha":"` + getHeadCommit(repo) + `","head_sha":"` + getHeadCommit(repo) + `"}}}`
-	stackDir := filepath.Join(repo.Dir, ".git", "stack")
-	os.MkdirAll(stackDir, 0755)
-	os.WriteFile(filepath.Join(stackDir, "graph.json"), []byte(graphContent), 0644)
-
-	// Checkout feature-1
-	if err := repo.Checkout("feature-1"); err != nil {
-		t.Fatalf("Failed to checkout feature-1: %v", err)
-	}
-
-	// Run 'st append feature-2'
-	cmd := exec.Command(stBinaryPath, "append", "feature-2")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("st append failed: %v\nOutput: %s", err, output)
-	}
-
-	// Verify feature-2 was created
-	if !repo.BranchExists("feature-2") {
-		t.Error("Branch 'feature-2' was not created")
-	}
-
-	// Verify graph was updated
-	content, _ := os.ReadFile(filepath.Join(stackDir, "graph.json"))
-	if !strings.Contains(string(content), "feature-2") {
-		t.Error("Graph doesn't contain 'feature-2'")
-	}
-
-	// Verify we're on feature-2
-	current, _ := repo.CurrentBranch()
-	if !strings.Contains(current, "feature-2") {
-		t.Errorf("Expected to be on 'feature-2', got '%s'", current)
-	}
-
-	t.Logf("✓ st append created child branch\nOutput: %s", output)
+	t.Cleanup(func() {
+		os.Chdir(oldWd)
+		repo.Cleanup()
+	})
+	return repo
 }
 
-// TestLogCommand tests the 'st log' command
-func TestLogCommand(t *testing.T) {
-	repo, err := testutil.NewGitRepo()
-	if err != nil {
-		t.Fatalf("Failed to create test repo: %v", err)
-	}
-	defer repo.Cleanup()
-
-	oldWd, _ := os.Getwd()
-	os.Chdir(repo.Dir)
-	defer os.Chdir(oldWd)
-
-	// Setup: Create initial commit
+// setupRepoWithStack creates a repo with InitStack called, returns the root branch name.
+func setupRepoWithStack(t *testing.T) (*testutil.GitRepo, string) {
+	t.Helper()
+	repo := setupRepo(t)
 	if err := repo.InitStack(); err != nil {
-		t.Fatalf("Failed to init stack: %v", err)
+		t.Fatalf("InitStack: %v", err)
 	}
-
-	// Create a simple graph
-	graphContent := `{"version":1,"root":"main","branches":{"feature-1":{"name":"feature-1","parent":"main","base_sha":"abc","head_sha":"def"}}}`
-	stackDir := filepath.Join(repo.Dir, ".git", "stack")
-	os.MkdirAll(stackDir, 0755)
-	os.WriteFile(filepath.Join(stackDir, "graph.json"), []byte(graphContent), 0644)
-
-	// Run 'st log'
-	cmd := exec.Command(stBinaryPath, "log")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("st log failed: %v\nOutput: %s", err, output)
-	}
-
-	// Verify output contains expected structure
-	if !strings.Contains(string(output), "main") {
-		t.Error("Log output doesn't contain 'main'")
-	}
-	if !strings.Contains(string(output), "feature-1") {
-		t.Error("Log output doesn't contain 'feature-1'")
-	}
-
-	t.Logf("✓ st log displayed stack\nOutput: %s", output)
+	root := getCurrentBranch(t, repo)
+	return repo, root
 }
 
-// TestRestackCommand tests the 'st restack' command
-func TestRestackCommand(t *testing.T) {
-	repo, err := testutil.NewGitRepo()
+// runSt executes the st binary and fails on error.
+func runSt(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(stBinary, args...)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to create test repo: %v", err)
+		t.Fatalf("st %v failed: %v\nOutput: %s", args, err, out)
 	}
-	defer repo.Cleanup()
-
-	oldWd, _ := os.Getwd()
-	os.Chdir(repo.Dir)
-	defer os.Chdir(oldWd)
-
-	// Setup: Create initial commit
-	if err := repo.InitStack(); err != nil {
-		t.Fatalf("Failed to init stack: %v", err)
-	}
-
-	// Get root branch name
-	rootBranch := getCurrentBranchName(repo)
-
-	// Create a feature branch
-	if err := repo.CreateBranch("feature-1"); err != nil {
-		t.Fatalf("Failed to create feature-1: %v", err)
-	}
-	if err := repo.CreateFile("feature1.txt", "content1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.AddAndCommit("Feature 1 commit"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create graph
-	stackDir := filepath.Join(repo.Dir, ".git", "stack")
-	os.MkdirAll(stackDir, 0755)
-	commit1 := getHeadCommit(repo)
-	graphContent := `{"version":1,"root":"` + rootBranch + `","branches":{"feature-1":{"name":"feature-1","parent":"` + rootBranch + `","base_sha":"` + commit1 + `","head_sha":"` + commit1 + `"}}}`
-	os.WriteFile(filepath.Join(stackDir, "graph.json"), []byte(graphContent), 0644)
-
-	// Make a commit on root branch to create divergence
-	if err := repo.Checkout(rootBranch); err != nil {
-		t.Fatalf("Failed to checkout %s: %v", rootBranch, err)
-	}
-	if err := repo.CreateFile("main-update.txt", "update"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.AddAndCommit("Main update"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Checkout feature-1 and restack
-	if err := repo.Checkout("feature-1"); err != nil {
-		t.Fatalf("Failed to checkout feature-1: %v", err)
-	}
-
-	// Run 'st restack'
-	cmd := exec.Command(stBinaryPath, "restack")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("st restack failed: %v\nOutput: %s", err, output)
-	}
-
-	// Verify output shows success
-	if !strings.Contains(string(output), "Restacked") {
-		t.Errorf("Expected 'Restacked' in output, got: %s", output)
-	}
-
-	t.Logf("✓ st restack completed\nOutput: %s", output)
+	return string(out)
 }
 
-// TestAttachAutoCommand tests 'st attach --auto' (non-interactive mode)
-func TestAttachAutoCommand(t *testing.T) {
-	repo, err := testutil.NewGitRepo()
-	if err != nil {
-		t.Fatalf("Failed to create test repo: %v", err)
+// runStExpectError executes the st binary and fails if there is NO error.
+func runStExpectError(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(stBinary, args...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("st %v expected error but succeeded\nOutput: %s", args, out)
 	}
-	defer repo.Cleanup()
-
-	oldWd, _ := os.Getwd()
-	os.Chdir(repo.Dir)
-	defer os.Chdir(oldWd)
-
-	// Setup: Create initial commit
-	if err := repo.InitStack(); err != nil {
-		t.Fatalf("Failed to init stack: %v", err)
-	}
-
-	rootBranch := getCurrentBranchName(repo)
-
-	// Create a tracked feature branch using st
-	cmd := exec.Command(stBinaryPath, "new", "feature-1")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("st new failed: %v\nOutput: %s", err, output)
-	}
-
-	// Checkout root to go back
-	if err := repo.Checkout(rootBranch); err != nil {
-		t.Fatalf("Failed to checkout %s: %v", rootBranch, err)
-	}
-
-	// Create a manual branch (outside of st)
-	if err := repo.CreateBranch("manual-branch"); err != nil {
-		t.Fatalf("Failed to create manual-branch: %v", err)
-	}
-	if err := repo.CreateFile("manual.txt", "manual content"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.AddAndCommit("Manual commit"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Checkout the manual branch
-	if err := repo.Checkout("manual-branch"); err != nil {
-		t.Fatalf("Failed to checkout manual-branch: %v", err)
-	}
-
-	// Run 'st attach --auto' - should attach manual-branch to the best candidate
-	cmd = exec.Command(stBinaryPath, "attach", "--auto")
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("st attach --auto failed: %v\nOutput: %s", err, output)
-	}
-
-	// Verify graph was updated with manual-branch
-	stackDir := filepath.Join(repo.Dir, ".git", "stack")
-	content, _ := os.ReadFile(filepath.Join(stackDir, "graph.json"))
-	if !strings.Contains(string(content), "manual-branch") {
-		t.Errorf("Graph doesn't contain 'manual-branch'. Content: %s", string(content))
-	}
-
-	t.Logf("✓ st attach --auto attached branch\nOutput: %s", output)
+	return string(out)
 }
 
-// Helper to get root branch name
-func getCurrentBranchName(repo *testutil.GitRepo) string {
+func getCurrentBranch(t *testing.T, repo *testutil.GitRepo) string {
+	t.Helper()
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = repo.Dir
-	out, _ := cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("getCurrentBranch: %v", err)
+	}
 	return strings.TrimSpace(string(out))
 }
 
-// Helper function to get current HEAD commit
-func getHeadCommit(repo *testutil.GitRepo) string {
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = repo.Dir
-	out, _ := cmd.Output()
-	return strings.TrimSpace(string(out))
+func getHeadSHA(t *testing.T, repo *testutil.GitRepo) string {
+	t.Helper()
+	return repo.HeadSHA()
+}
+
+func loadGraph(t *testing.T, repo *testutil.GitRepo) *graph.Graph {
+	t.Helper()
+	path := filepath.Join(repo.Dir, ".git", "stack", "graph.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("loadGraph: %v", err)
+	}
+	var g graph.Graph
+	if err := json.Unmarshal(data, &g); err != nil {
+		t.Fatalf("loadGraph unmarshal: %v", err)
+	}
+	return &g
+}
+
+func graphContains(t *testing.T, repo *testutil.GitRepo, branch string) bool {
+	t.Helper()
+	g := loadGraph(t, repo)
+	_, ok := g.Branches[branch]
+	return ok
+}
+
+func assertContains(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if !strings.Contains(haystack, needle) {
+		t.Errorf("expected output to contain %q, got:\n%s", needle, haystack)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestNew
+// ---------------------------------------------------------------------------
+
+func TestNew(t *testing.T) {
+	t.Run("creates_branch_and_updates_graph", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+
+		if !repo.BranchExists("feature-1") {
+			t.Error("branch feature-1 not created")
+		}
+
+		g := loadGraph(t, repo)
+		b, ok := g.Branches["feature-1"]
+		if !ok {
+			t.Fatal("feature-1 not in graph")
+		}
+		if b.Parent != root {
+			t.Errorf("parent = %q, want %q", b.Parent, root)
+		}
+		if cur := getCurrentBranch(t, repo); cur != "feature-1" {
+			t.Errorf("current branch = %q, want feature-1", cur)
+		}
+	})
+
+	t.Run("multiple_branches_from_root", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "a")
+		repo.Checkout(root)
+		runSt(t, "new", "b")
+
+		g := loadGraph(t, repo)
+		for _, name := range []string{"a", "b"} {
+			b, ok := g.Branches[name]
+			if !ok {
+				t.Fatalf("%s not in graph", name)
+			}
+			if b.Parent != root {
+				t.Errorf("%s parent = %q, want %q", name, b.Parent, root)
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAppend
+// ---------------------------------------------------------------------------
+
+func TestAppend(t *testing.T) {
+	t.Run("creates_child_from_current", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+
+		g := loadGraph(t, repo)
+		b, ok := g.Branches["f2"]
+		if !ok {
+			t.Fatal("f2 not in graph")
+		}
+		if b.Parent != "f1" {
+			t.Errorf("f2 parent = %q, want f1", b.Parent)
+		}
+		if cur := getCurrentBranch(t, repo); cur != "f2" {
+			t.Errorf("current branch = %q, want f2", cur)
+		}
+	})
+
+	t.Run("error_current_not_in_stack", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		// Create a tracked branch so graph exists with root != "untracked"
+		runSt(t, "new", "tracked")
+		repo.Checkout("main")
+		repo.CreateBranch("untracked")
+		out := runStExpectError(t, "append", "child")
+		assertContains(t, out, "not in the stack")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestInsert
+// ---------------------------------------------------------------------------
+
+func TestInsert(t *testing.T) {
+	t.Run("inserts_before_current_and_reparents", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		runSt(t, "insert", "pre-f")
+
+		g := loadGraph(t, repo)
+		pref, ok := g.Branches["pre-f"]
+		if !ok {
+			t.Fatal("pre-f not in graph")
+		}
+		if pref.Parent != root {
+			t.Errorf("pre-f parent = %q, want %q", pref.Parent, root)
+		}
+
+		f1, ok := g.Branches["f1"]
+		if !ok {
+			t.Fatal("f1 not in graph")
+		}
+		if f1.Parent != "pre-f" {
+			t.Errorf("f1 parent = %q, want pre-f", f1.Parent)
+		}
+
+		if cur := getCurrentBranch(t, repo); cur != "pre-f" {
+			t.Errorf("current branch = %q, want pre-f", cur)
+		}
+	})
+
+	t.Run("error_current_not_in_stack", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		repo.CreateBranch("untracked")
+		out := runStExpectError(t, "insert", "x")
+		assertContains(t, out, "not in the stack")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestRestack
+// ---------------------------------------------------------------------------
+
+func TestRestack(t *testing.T) {
+	t.Run("rebases_child_onto_diverged_parent", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		// Diverge root
+		repo.Checkout(root)
+		repo.CreateFile("root-update.txt", "new stuff")
+		repo.AddAndCommit("root diverge")
+
+		// Restack from f1
+		repo.Checkout("f1")
+		runSt(t, "restack")
+
+		// f1 should now have the root's file
+		if !repo.FileExists("root-update.txt") {
+			t.Error("f1 should have root-update.txt after restack")
+		}
+	})
+
+	t.Run("to_current_flag", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		// Diverge root
+		repo.Checkout(root)
+		repo.CreateFile("root2.txt", "new")
+		repo.AddAndCommit("root diverge")
+
+		// Checkout f1 (not the tip), use --to-current
+		repo.Checkout("f1")
+		runSt(t, "restack", "--to-current")
+
+		if !repo.FileExists("root2.txt") {
+			t.Error("f1 should have root2.txt after restack --to-current")
+		}
+	})
+
+	t.Run("error_not_at_tip_without_flag", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		repo.Checkout(root)
+		repo.CreateFile("root3.txt", "diverge")
+		repo.AddAndCommit("root diverge")
+
+		repo.Checkout("f1")
+		out := runStExpectError(t, "restack")
+		assertContains(t, out, "--to-current")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestContinue
+// ---------------------------------------------------------------------------
+
+func TestContinue(t *testing.T) {
+	t.Run("resumes_after_conflict", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("shared.txt", "f1 content")
+		repo.AddAndCommit("f1 commit")
+
+		// Create conflicting change on root
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root content")
+		repo.AddAndCommit("root conflict")
+
+		// Restack should fail with conflict
+		repo.Checkout("f1")
+		runStExpectError(t, "restack")
+
+		// Resolve the conflict
+		repo.WriteFile("shared.txt", "resolved content")
+		cmd := exec.Command("git", "add", "shared.txt")
+		cmd.Dir = repo.Dir
+		cmd.Run()
+
+		// GIT_EDITOR=true so rebase --continue doesn't open editor
+		contCmd := exec.Command(stBinary, "continue")
+		contCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+		out, err := contCmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("st continue failed: %v\nOutput: %s", err, out)
+		}
+	})
+
+	t.Run("error_no_rebase_in_progress", func(t *testing.T) {
+		setupRepoWithStack(t)
+		out := runStExpectError(t, "continue")
+		assertContains(t, out, "no rebase in progress")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAttach
+// ---------------------------------------------------------------------------
+
+func TestAttach(t *testing.T) {
+	t.Run("auto_attaches_untracked_branch", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+
+		// Create an untracked branch manually
+		repo.Checkout(root)
+		repo.CreateBranch("manual-branch")
+		repo.CreateFile("manual.txt", "manual")
+		repo.AddAndCommit("manual commit")
+
+		runSt(t, "attach", "--auto")
+
+		if !graphContains(t, repo, "manual-branch") {
+			t.Error("manual-branch should be in graph after attach --auto")
+		}
+	})
+
+	t.Run("tui_enter_selects_branch", func(t *testing.T) {
+		candidates := []attachCandidate{
+			{name: "main", isCurrent: false},
+			{name: "feature-1", isCurrent: true},
+		}
+		var items []list.Item
+		for _, c := range candidates {
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			candidates:     candidates,
+		}
+
+		// Press Enter — should select index 0 ("main")
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m := updated.(attachTUI)
+		if m.selected != "main" {
+			t.Errorf("selected = %q, want main", m.selected)
+		}
+	})
+
+	t.Run("tui_q_quits_without_selection", func(t *testing.T) {
+		candidates := []attachCandidate{
+			{name: "main", isCurrent: false},
+		}
+		var items []list.Item
+		for _, c := range candidates {
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			candidates:     candidates,
+		}
+
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+		m := updated.(attachTUI)
+		if m.selected != "" {
+			t.Errorf("selected = %q, want empty", m.selected)
+		}
+		if !m.quitting {
+			t.Error("quitting should be true")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestRestore
+// ---------------------------------------------------------------------------
+
+func TestRestore(t *testing.T) {
+	t.Run("restores_from_automatic_backup", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		// Create f1 with a commit
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1 original")
+		repo.AddAndCommit("f1 commit")
+
+		// Manually create a backup branch matching the automatic backup format
+		// (backup/<branch>/<timestamp>) so restore can find it
+		cmd := exec.Command("git", "branch", "backup/f1/1234567890", "f1")
+		cmd.Dir = repo.Dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("failed to create backup branch: %v\n%s", err, out)
+		}
+
+		// Restore f1 from the backup
+		runSt(t, "restore", "f1")
+	})
+
+	t.Run("error_no_backups", func(t *testing.T) {
+		setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		out := runStExpectError(t, "restore", "f1")
+		assertContains(t, out, "no backups found")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestSync
+// ---------------------------------------------------------------------------
+
+func TestSync(t *testing.T) {
+	t.Run("dry_run_lists_branches", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		if err := repo.AddRemote(); err != nil {
+			t.Fatalf("AddRemote: %v", err)
+		}
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		out := runSt(t, "-v", "sync", "--dry-run")
+		assertContains(t, out, "f1")
+	})
+
+	t.Run("error_no_remote", func(t *testing.T) {
+		setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		out := runStExpectError(t, "sync")
+		assertContains(t, out, "no remote")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestLog
+// ---------------------------------------------------------------------------
+
+func TestLog(t *testing.T) {
+	t.Run("displays_tree", func(t *testing.T) {
+		_, root := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runSt(t, "log")
+		assertContains(t, out, root)
+		assertContains(t, out, "f1")
+	})
+
+	t.Run("shows_current_marker", func(t *testing.T) {
+		setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runSt(t, "log")
+		assertContains(t, out, "●")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestSwitchTUI — model-level tests, no binary
+// ---------------------------------------------------------------------------
+
+func TestSwitchTUI(t *testing.T) {
+	makeSwitchModel := func(branches []branchItem) switchTUI {
+		var items []list.Item
+		for _, b := range branches {
+			items = append(items, b)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+		return switchTUI{
+			list:     l,
+			branches: branches,
+			current:  "main",
+		}
+	}
+
+	t.Run("enter_selects_branch", func(t *testing.T) {
+		branches := []branchItem{
+			{name: "main", current: true, depth: 0},
+			{name: "feature-1", current: false, depth: 1},
+		}
+		model := makeSwitchModel(branches)
+		// Select index 1
+		model.list.Select(1)
+
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m := updated.(switchTUI)
+		if m.selected != "feature-1" {
+			t.Errorf("selected = %q, want feature-1", m.selected)
+		}
+	})
+
+	t.Run("search_mode", func(t *testing.T) {
+		branches := []branchItem{
+			{name: "main", current: true, depth: 0},
+			{name: "api-endpoint", current: false, depth: 1},
+			{name: "feature-1", current: false, depth: 1},
+		}
+		model := makeSwitchModel(branches)
+
+		// Enter search mode
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+		m := updated.(switchTUI)
+		if !m.searchMode {
+			t.Fatal("should be in search mode")
+		}
+
+		// Type "api"
+		for _, ch := range "api" {
+			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+			m = updated.(switchTUI)
+		}
+
+		if len(m.matches) != 1 {
+			t.Fatalf("matches = %d, want 1", len(m.matches))
+		}
+		if m.matches[0] != 1 {
+			t.Errorf("match index = %d, want 1", m.matches[0])
+		}
+	})
+
+	t.Run("q_quits", func(t *testing.T) {
+		branches := []branchItem{
+			{name: "main", current: true, depth: 0},
+		}
+		model := makeSwitchModel(branches)
+
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+		m := updated.(switchTUI)
+		if !m.quitting {
+			t.Error("should be quitting")
+		}
+		if m.selected != "" {
+			t.Errorf("selected = %q, want empty", m.selected)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestBackup
+// ---------------------------------------------------------------------------
+
+func TestBackup(t *testing.T) {
+	t.Run("creates_manual_backup_branches", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		runSt(t, "backup")
+
+		// Check for backups/* branches
+		cmd := exec.Command("git", "branch", "--list", "backups/*")
+		cmd.Dir = repo.Dir
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git branch --list: %v", err)
+		}
+		if !strings.Contains(string(out), "f1") {
+			t.Errorf("backup branches should contain f1, got: %s", out)
+		}
+	})
+
+	t.Run("error_no_branches", func(t *testing.T) {
+		setupRepoWithStack(t)
+		out := runStExpectError(t, "backup")
+		assertContains(t, out, "no branches")
+	})
 }

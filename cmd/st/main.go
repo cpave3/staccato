@@ -204,19 +204,44 @@ func main() {
 }
 
 func init() {
+	bannerLines := []string{
+		` ███████╗ ████████╗  █████╗   ██████╗  ██████╗  █████╗  ████████╗  ██████╗`,
+		` ██╔════╝ ╚══██╔══╝ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗ ╚══██╔══╝ ██╔═══██╗`,
+		` ███████╗    ██║    ███████║ ██║      ██║      ███████║    ██║    ██║   ██║`,
+		` ╚════██║    ██║    ██╔══██║ ██║      ██║      ██╔══██║    ██║    ██║   ██║`,
+		` ███████║    ██║    ██║  ██║ ╚██████╗ ╚██████╗ ██║  ██║    ██║    ╚██████╔╝`,
+		` ╚══════╝    ╚═╝    ╚═╝  ╚═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝    ╚═╝     ╚═════╝`,
+	}
+	// Find the longest line (in runes) for gradient calculation
+	maxLen := 0
+	for _, l := range bannerLines {
+		if n := len([]rune(l)); n > maxLen {
+			maxLen = n
+		}
+	}
+	// Horizontal gradient from #524180 to #ad8499
+	r0, g0, b0 := 0x52, 0x41, 0x80
+	r1, g1, b1 := 0xad, 0x84, 0x99
+	var banner string
+	for _, line := range bannerLines {
+		runes := []rune(line)
+		for i, ch := range runes {
+			t := float64(i) / float64(maxLen-1)
+			r := int(float64(r0) + t*float64(r1-r0))
+			g := int(float64(g0) + t*float64(g1-g0))
+			b := int(float64(b0) + t*float64(b1-b0))
+			color := fmt.Sprintf("#%02x%02x%02x", r, g, b)
+			banner += lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(color)).Render(string(ch))
+		}
+		banner += "\n"
+	}
+
 	rootCmd = &cobra.Command{
 		Use:   "st",
 		Short: "A deterministic, offline-first Git stack management CLI",
-		Long: `		
- ███████╗ ████████╗  █████╗   ██████╗  ██████╗  █████╗  ████████╗  ██████╗
- ██╔════╝ ╚══██╔══╝ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗ ╚══██╔══╝ ██╔═══██╗
- ███████╗    ██║    ███████║ ██║      ██║      ███████║    ██║    ██║   ██║
- ╚════██║    ██║    ██╔══██║ ██║      ██║      ██╔══██║    ██║    ██║   ██║
- ███████║    ██║    ██║  ██║ ╚██████╗ ╚██████╗ ██║  ██║    ██║    ╚██████╔╝
- ╚══════╝    ╚═╝    ╚═╝  ╚═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝    ╚═╝     ╚═════╝
-		
-Staccato provides branch-level stacking with deterministic restacking, automatic backups,
-and lazy attachment for retrofitting existing branches.`,
+		Long: banner + "\n\n" +
+			"Staccato provides branch-level stacking with deterministic restacking, automatic backups,\n" +
+			"and lazy attachment for retrofitting existing branches.",
 	}
 
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")

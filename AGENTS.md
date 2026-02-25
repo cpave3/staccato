@@ -2,196 +2,151 @@
 
 ## Project Overview
 
-**st** is a Git stack management CLI written in Go. It provides deterministic, branch-level stacking inspired by Graphite and Git Town.
+**st (Staccato)** is a deterministic, offline-first Git stack management CLI written in Go. It provides branch-level stacking with automatic backups, lazy attachment, and interactive TUI for branch selection.
 
 ## Architecture
 
 ### Project Structure
 ```
 st/
-├── cmd/st/           # Cobra CLI entrypoint
-│   └── main.go       # All commands defined here
+├── cmd/st/
+│   ├── main.go           # All commands + attachTUI model
+│   ├── switch.go          # switchTUI model + switch command
+│   └── main_test.go       # Comprehensive E2E + TUI model tests
+├── internal/testutil/
+│   └── git.go             # Test helpers (GitRepo, isolated repos)
 ├── pkg/
-│   ├── graph/        # Stack graph model & JSON persistence
-│   ├── git/          # Git operations wrapper (subprocess)
-│   ├── backup/       # Backup/restore system
-│   ├── restack/      # Topological sort & restack engine
-│   ├── attach/       # Lazy attachment logic
-│   └── output/       # CLI formatting utilities
-├── go.mod            # Module definition
-└── st                # Compiled binary
+│   ├── graph/             # Stack graph model & JSON persistence
+│   ├── git/               # Git operations wrapper (subprocess)
+│   ├── backup/            # Backup/restore system (auto + manual)
+│   ├── restack/           # Topological sort & restack engine
+│   ├── attach/            # Lazy attachment logic
+│   └── output/            # CLI formatting utilities
+├── go.mod
+└── st                     # Compiled binary
 ```
 
 ### Key Components
 
 #### pkg/graph
-- `Graph` struct: Root branch + map of tracked branches
-- `Branch` struct: name, parent, base_sha, head_sha
+- `Graph` struct: Root branch + `map[string]*Branch` of tracked branches
+- `Branch` struct: `Name`, `Parent`, `BaseSHA`, `HeadSHA`
 - JSON persistence to `.git/stack/graph.json`
-- Versioned for future compatibility
+- `GetChildren(parent)` returns `[]*Branch`
+- `ValidateNoCycle()` prevents circular dependencies
 
 #### pkg/git
-- `Runner` struct: Wraps git subprocess calls
-- Operations: branch, checkout, rebase, merge-base, rerere
-- Error handling with meaningful messages
+- `Runner` struct: Wraps git subprocess calls via `exec.Command`
+- All output is trimmed via `strings.TrimSpace`
+- Key methods: `CreateAndCheckoutBranch`, `Rebase`, `RebaseContinue`, `IsRebaseInProgress`, `GetMergeBase`, `CopyBranch`, `HasRemote`, `Push`
+- `GetAllBranches()` uses `--format=%(refname:short)`
 
 #### pkg/backup
-- `Manager` struct: Handles backup creation/restoration
-- Backup naming: `backup/<branch>/<timestamp>`
-- Stack-level backup operations
-- Cleanup old backups
+- Two backup schemes:
+  - **Automatic** (`backup/<branch>/<nanosecond-timestamp>`): Created during restack/insert, auto-cleaned on success
+  - **Manual** (`backups/<YYYY-MM-DD_HH-MM-SS>/<branch>`): Created via `st backup`, persists until deleted
+- `ListBackups(branch)` looks for `backup/<branch>/` prefix (automatic only)
+- `RestoreBackup` deletes original, copies backup, checks out restored branch, deletes backup ref
 
 #### pkg/restack
-- `Engine` struct: Orchestrates restack operations
-- `TopologicalSort()`: Orders branches (parents first)
-- `Restack()`: Rebases stack with conflict handling
-- `Continue()`: Resumes after conflict resolution
-- `Abort()`: Restores from backups
+- `TopologicalSort(g, root)`: Parents before children, cycle detection
+- `GetStackBranches(g, start)`: DFS all descendants including start
+- `GetDownstreamBranches(g, start)`: Descendants excluding start
+- `GetLineage(g, branch)`: Ancestors + descendants chain
+- `GetAncestors(g, branch)`: Root → branch (no descendants)
+- `IsBranchAtTip(g, branch)`: No children = true
+- `Restack()` / `RestackLineage()`: Create backups → enable rerere → topo-sort → rebase each onto parent → stop on conflict
+- `Continue()`: Resume rebase → update SHAs → continue restack
 
 #### pkg/attach
-- `Attacher` struct: Handles lazy attachment
-- `SuggestParents()`: Uses merge-base to find candidates
-- `AutoAttach()`: Automatic or manual parent selection
-- `FindRoot()`: Traces ancestry to find root
+- `SuggestParents(g, branch)`: Scores candidates by merge-base recency
+- `AutoAttach(g, branch, true)`: Uses first (best) candidate
+- `AttachBranch(g, branch, parent)`: Gets merge-base as BaseSHA, HEAD as HeadSHA
+- `IsBranchInGraph()` / `FindRoot()`: Graph traversal helpers
+- `GetUnattachedBranches()`: Branches not in graph
 
 #### pkg/output
-- `Printer` struct: Consistent CLI output
-- Icons: ✔ success, ⚠ warning, ✘ error
-- Colored/formatted output
+- `Printer` struct with `verbose` flag
+- `Info()` only prints when verbose is true — **tests need `-v` flag** for verbose output
+- Icons: `✔` success, `⚠` warning, `✘` error, `●` current branch, `○` other branch
+
+### TUI Models (Bubble Tea)
+
+Both `attachTUI` and `switchTUI` in `cmd/st/`:
+- Use `list.Model` from `charmbracelet/bubbles` for navigation
+- **Index-based selection**: `list.Index()` + `candidates[idx].name` (NOT type assertion from list items)
+- Search mode activated by `/`, filtered by `updateMatches()`
+- `selected` field holds result; `quitting` indicates exit
+- `Enter` selects, `q`/`Esc` quits without selection
+
+`attachTUI` supports recursive attachment: if selected parent isn't tracked, recursively prompts to attach it first.
+
+`switchTUI` renders tree with depth-based indentation, supports `n/N` for search match navigation.
 
 ## Commands
 
-### new
-Creates branch from root, checks it out.
+| Command | Description | Key flags |
+|---------|-------------|-----------|
+| `new <branch>` | Create from root, checkout | — |
+| `append <branch>` | Create child of current, checkout | — |
+| `insert <branch>` | Insert before current, reparent+restack downstream, checkout new | — |
+| `restack` | Rebase lineage onto parents | `--to-current` |
+| `continue` | Resume restack after conflict | — |
+| `attach [branch]` | Adopt branch into stack (TUI or auto) | `--auto` |
+| `restore [branch]` | Restore from automatic backup | `--all` |
+| `sync` | Push to remote | `--dry-run` |
+| `backup` | Manual snapshot of all stack branches | — |
+| `log` | Display stack tree | — |
+| `switch` | Interactive branch selector (TUI) | — |
 
-### append
-Creates branch from current, checks it out.
-
-### insert
-Creates branch before current, reparents current, restacks downstream, checks out new branch.
-
-### restack
-- Topological sort
-- Create backups
-- Rebase each branch onto parent
-- Stop on conflict
-- Cleanup backups on success
-
-### continue
-Resume restack after manual conflict resolution.
-
-### attach
-Add existing branch to graph:
-- Suggest parents via merge-base
-- Auto mode or manual selection
-- Recursive attachment to root
-
-### restore
-Restore branch/stack from backup.
-
-### sync
-Push branches to remote (explicit, never automatic).
-
-### log
-Display stack hierarchy tree.
+### Command data flow
+```
+getContext() → (Graph, git.Runner, output.Printer, repoPath, error)
+  └─ loads/creates graph, finds repo root
+... perform operations ...
+saveContext(g, repoPath) → saves graph JSON
+```
 
 ## Testing
 
-### Test Philosophy
-- Integration tests over unit tests
-- Test behavior through public interfaces
-- Use real git repositories in temp dirs
-- One test per behavior (vertical slices)
+### Test Architecture
+- **Single test file**: `cmd/st/main_test.go` covers all 11 commands + TUI model tests
+- **`TestMain`**: Builds binary once to temp file, used by all test functions
+- **No `t.Parallel()`**: Tests use `os.Chdir` which is process-global
+- **Helpers**: `setupRepo`, `setupRepoWithStack`, `runSt`, `runStExpectError`, `loadGraph`, `graphContains`
+
+### Test helpers (`internal/testutil/git.go`)
+- `NewGitRepo()`: Creates temp dir, `git init`, configures user, sets `HOME` for isolation
+- `InitStack()`: Creates initial commit + `.git/stack/` directory
+- `HeadSHA()`: Returns trimmed HEAD SHA
+- `AddRemote()`: Creates bare repo, adds as `origin`
+- `FileExists(filename)`: Checks working tree
+- `WriteFile(filename, content)`: Writes without staging
+- `Cleanup()`: Removes repo dir + origin dir if set
 
 ### Running Tests
 ```bash
-# All tests
-go test ./...
+# All E2E tests
+go test ./cmd/st/ -v -count=1
+
+# All tests in project
+go test ./... -v -count=1
 
 # Specific packages
 go test ./pkg/graph/... -v
-go test ./pkg/git/... -v
-go test ./pkg/backup/... -v
 go test ./pkg/restack/... -v
-go test ./pkg/attach/... -v
 ```
 
 ### Test Patterns
-Each package has `*_test.go` files:
-- `graph_test.go`: Graph operations, persistence, cycle detection
-- `git_test.go`: Git operations, branch management
-- `backup_test.go`: Backup creation, restoration, listing
-- `restack_test.go`: Topological sort, restack logic
-- `attach_test.go`: Attachment, parent suggestions
+- **E2E tests** (per command): Set up repo → run `st` binary → assert on git state and graph JSON
+- **TUI model tests**: Construct model directly → send `tea.KeyMsg` → assert on `selected`/`quitting` fields
+- **Error tests**: Use `runStExpectError` → assert error message content
+- **Backup tests**: Automatic backups use `backup/` prefix; manual use `backups/` prefix. `st restore` only finds automatic backups.
 
-## Git Operations
-
-All git operations go through `git.Runner`:
-- Subprocess execution via `exec.Command`
-- Repository path context
-- Combined stdout/stderr capture
-- Trimmed output
-
-Key operations:
-- `CreateAndCheckoutBranch(name)` - Create and switch
-- `Rebase(target)` - Rebase current onto target
-- `GetMergeBase(a, b)` - Find common ancestor
-- `IsRebaseInProgress()` - Check for active rebase
-- `EnableRerere()` - Enable conflict recording
-
-## Error Handling
-
-- Return errors with context: `fmt.Errorf("context: %w", err)`
-- Check rebase status to detect conflicts
-- Restore backups on failure
-- Clear error messages to user
-
-## Stack Graph Format
-
-JSON format in `.git/stack/graph.json`:
-
-```json
-{
-  "version": 1,
-  "root": "main",
-  "branches": {
-    "feature": {
-      "name": "feature",
-      "parent": "main",
-      "base_sha": "abc...",
-      "head_sha": "def..."
-    }
-  }
-}
-```
-
-## Common Tasks
-
-### Adding a new command
-1. Add function in `cmd/st/main.go`
-2. Use `cobra.Command` structure
-3. Call `rootCmd.AddCommand()` in `init()`
-4. Implement using existing packages
-5. Test manually with real git repo
-
-### Adding a new package
-1. Create `pkg/<name>/<name>.go`
-2. Create `pkg/<name>/<name>_test.go`
-3. Follow existing patterns (struct + New* constructor)
-4. Write integration tests first
-5. Export only public interface
-
-### Modifying existing commands
-1. Read current implementation in `cmd/st/main.go`
-2. Understand data flow: getContext() → operation → saveContext()
-3. Make changes
-4. Test with real repository
-5. Update any affected tests
-
-## Dependencies
-
-- `github.com/spf13/cobra` - CLI framework
-- Standard library only for packages
+### Important test considerations
+- `append` on an untracked branch auto-creates a graph with that branch as root (so it "succeeds"). To test the error case, create a graph with a different root first.
+- `sync --dry-run` uses `printer.Info()` which requires verbose mode — pass `-v` flag to binary.
+- `insert` cleans up automatic backups on success. To test `restore`, create backup branches manually matching the `backup/<branch>/<timestamp>` format.
 
 ## Build & Run
 
@@ -199,26 +154,23 @@ JSON format in `.git/stack/graph.json`:
 # Build
 go build -o st ./cmd/st/
 
-# Install to PATH
-ln -sf $(pwd)/st ~/.local/bin/st
-
 # Run
-st --help
-st new feature-branch
+./st --help
+./st new feature-branch
+./st log
 ```
+
+## Dependencies
+
+- `github.com/spf13/cobra` — CLI framework
+- `github.com/charmbracelet/bubbletea` — TUI framework
+- `github.com/charmbracelet/bubbles` — TUI components (list)
+- `github.com/charmbracelet/lipgloss` — Terminal styling
 
 ## Code Style
 
 - Go standard formatting (`gofmt`)
-- Clear variable names
-- Document public functions
-- Keep functions focused
-- Error messages: lowercase, no period
-
-## Future Considerations
-
-- Stack graph versioning for migrations
-- More sophisticated conflict handling
-- Interactive UI for parent selection
-- PR creation integration
-- Configurable backup retention
+- Error messages: lowercase, no trailing period
+- `fmt.Errorf("context: %w", err)` for wrapped errors
+- Constructors: `NewFoo(...)` pattern
+- Public API only for cross-package use

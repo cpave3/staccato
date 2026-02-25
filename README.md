@@ -1,10 +1,11 @@
-# st - Git Stack Management CLI
+# Staccato - Git Stack Management CLI
 
 A deterministic, offline-first Git stack management tool inspired by Graphite and Git Town.
 
 ## Overview
 
 `st` provides branch-level stacking with:
+
 - **Deterministic restacking**: Rebase branches in topological order, stopping on first conflict
 - **Automatic backups**: Creates backups before any destructive operation
 - **Lazy attachment**: Retrofit existing manually-stacked branches
@@ -45,24 +46,25 @@ st sync
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `st new <branch>` | Create a new branch from root/main |
-| `st append <branch>` | Create a child branch from current |
-| `st insert <branch>` | Insert a branch before current, restack downstream |
-| `st restack` | Restack entire stack in topological order |
-| `st continue` | Resume restack after conflict resolution |
-| `st attach [--auto]` | Adopt an existing branch into the stack (opens TUI by default) |
-| `st switch` | Interactive branch switcher with vim-like navigation |
-| `st restore [branch]` | Restore from backup |
-| `st sync [--dry-run]` | Push branches to remote |
-| `st log` | Display stack hierarchy |
+| Command               | Description                                                    |
+| --------------------- | -------------------------------------------------------------- |
+| `st new <branch>`     | Create a new branch from root/main                             |
+| `st append <branch>`  | Create a child branch from current                             |
+| `st insert <branch>`  | Insert a branch before current, restack downstream             |
+| `st restack`          | Restack entire stack in topological order                      |
+| `st continue`         | Resume restack after conflict resolution                       |
+| `st attach [--auto]`  | Adopt an existing branch into the stack (opens TUI by default) |
+| `st switch`           | Interactive branch switcher with vim-like navigation           |
+| `st restore [branch]` | Restore from backup                                            |
+| `st sync [--dry-run]` | Push branches to remote                                        |
+| `st log`              | Display stack hierarchy                                        |
 
 ### TUI Commands
 
 The `st attach` and `st switch` commands launch interactive TUIs with vim-like navigation:
+
 - **Arrow keys**: Navigate up/down
-- **/**: Enter search mode  
+- **/**: Enter search mode
 - **Enter**: Select item (or exit search and jump to first match)
 - **n/N**: Navigate to next/previous match (after exiting search)
 - **q/Esc**: Quit
@@ -72,21 +74,25 @@ The `st attach` and `st switch` commands launch interactive TUIs with vim-like n
 ## Features
 
 ### Branch-Level Stacking
+
 - Think in branches, not commits
 - Each branch stores parent, base SHA, and head SHA
 - Metadata persisted in `.git/stack/graph.json`
 
 ### Deterministic Restacking
+
 - Topological sort ensures parents rebased before children
 - Branch-level rebasing: conflicts occur once per branch
 - Git rerere integration for automatic conflict resolution
 
 ### Safety First
+
 - Automatic backups before destructive operations
 - Restore from backup if restack fails
 - Cycle detection prevents invalid stack structures
 
 ### Lazy Attachment (Recursive)
+
 - Retrofit existing manually-created branches
 - Shows ALL branches as potential parents (tracked or untracked)
 - **Recursive attachment**: After selecting m3's parent (m2), it prompts for m2's parent, and so on until reaching root
@@ -94,7 +100,9 @@ The `st attach` and `st switch` commands launch interactive TUIs with vim-like n
 - Interactive TUI mode for visual parent selection
 
 ### Interactive TUIs
+
 Both `st switch` and `st attach-tui` provide vim-like navigation:
+
 - **Arrow keys**: Navigate up/down
 - **/**: Enter search mode
 - **Enter**: Exit search mode and jump to first match
