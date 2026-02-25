@@ -224,6 +224,11 @@ func (r *Runner) DeleteBranch(name string, force bool) error {
 	return err
 }
 
+// GetRemoteURL returns the URL of the named remote
+func (r *Runner) GetRemoteURL(name string) (string, error) {
+	return r.Run("remote", "get-url", name)
+}
+
 // CopyBranch creates a backup of a branch with a new name
 func (r *Runner) CopyBranch(source, destination string) error {
 	_, err := r.Run("branch", destination, source)

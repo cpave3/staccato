@@ -258,6 +258,7 @@ func init() {
 	rootCmd.AddCommand(logCmd())
 	rootCmd.AddCommand(switchCmdFunc())
 	rootCmd.AddCommand(backupCmd())
+	rootCmd.AddCommand(prCmd())
 }
 
 // getContext loads the graph and git runner for commands
