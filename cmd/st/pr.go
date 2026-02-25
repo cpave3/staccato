@@ -42,6 +42,13 @@ This ensures PRs in a stack are chained correctly.`,
 				return fmt.Errorf("branch '%s' is not in the stack — run 'st attach' first", currentBranch)
 			}
 
+			if !gitRunner.RemoteBranchExists(currentBranch) {
+				fmt.Printf("Branch '%s' has not been pushed — pushing now...\n", currentBranch)
+				if err := gitRunner.Push(currentBranch, false); err != nil {
+					return fmt.Errorf("failed to push branch: %w", err)
+				}
+			}
+
 			f, err := forge.Detect(gitRunner)
 			if err != nil {
 				return err
