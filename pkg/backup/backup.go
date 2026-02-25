@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/st/pkg/git"
+	"github.com/cpave3/staccato/pkg/git"
 )
 
 const (

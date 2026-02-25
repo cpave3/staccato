@@ -1,4 +1,4 @@
-module github.com/user/st
+module github.com/cpave3/staccato
 
 go 1.25.0
 

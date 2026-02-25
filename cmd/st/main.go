@@ -10,12 +10,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	"github.com/user/st/pkg/attach"
-	"github.com/user/st/pkg/backup"
-	"github.com/user/st/pkg/git"
-	"github.com/user/st/pkg/graph"
-	"github.com/user/st/pkg/output"
-	"github.com/user/st/pkg/restack"
+	"github.com/cpave3/staccato/pkg/attach"
+	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/git"
+	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/cpave3/staccato/pkg/output"
+	"github.com/cpave3/staccato/pkg/restack"
 )
 
 var (

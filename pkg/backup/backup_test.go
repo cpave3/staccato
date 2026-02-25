@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/user/st/pkg/git"
+	"github.com/cpave3/staccato/pkg/git"
 )
 
 func TestBackupManager_CanCreateBackup(t *testing.T) {

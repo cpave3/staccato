@@ -3,9 +3,9 @@ package restack
 import (
 	"fmt"
 
-	"github.com/user/st/pkg/backup"
-	"github.com/user/st/pkg/git"
-	"github.com/user/st/pkg/graph"
+	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/git"
+	"github.com/cpave3/staccato/pkg/graph"
 )
 
 // Result represents the outcome of a restack operation

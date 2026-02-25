@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/user/st/pkg/forge"
-	"github.com/user/st/pkg/graph"
+	"github.com/cpave3/staccato/pkg/forge"
+	"github.com/cpave3/staccato/pkg/graph"
 )
 
 // Symbols for CLI output

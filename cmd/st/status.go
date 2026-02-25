@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/user/st/pkg/forge"
+	"github.com/cpave3/staccato/pkg/forge"
 )
 
 func statusCmd() *cobra.Command {

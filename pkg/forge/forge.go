@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/user/st/pkg/git"
+	"github.com/cpave3/staccato/pkg/git"
 )
 
 // PRCreateOpts holds options for creating a pull request.

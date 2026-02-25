@@ -10,8 +10,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/user/st/internal/testutil"
-	"github.com/user/st/pkg/graph"
+	"github.com/cpave3/staccato/internal/testutil"
+	"github.com/cpave3/staccato/pkg/graph"
 )
 
 // stBinary holds the path to the compiled binary, built once in TestMain.
