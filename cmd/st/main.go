@@ -239,7 +239,7 @@ func init() {
 	rootCmd = &cobra.Command{
 		Use:   "st",
 		Short: "A deterministic, offline-first Git stack management CLI",
-		Long: banner + "\n\n" +
+		Long: "\n" + banner + "\n\n" +
 			"Staccato provides branch-level stacking with deterministic restacking, automatic backups,\n" +
 			"and lazy attachment for retrofitting existing branches.",
 	}
