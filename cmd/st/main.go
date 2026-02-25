@@ -913,6 +913,7 @@ Use this to recover from failed restack operations.`,
 
 func syncCmd() *cobra.Command {
 	var dryRun bool
+	var downOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "sync",
@@ -1045,19 +1046,21 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 			// 8. Push remaining branches (force-with-lease since they may have been rebased)
 			remaining := restack.GetStackBranches(g, trunk)
 			pushedCount := 0
-			for _, branch := range remaining {
-				if branch == trunk {
-					continue
-				}
-				if dryRun {
-					printer.Info("Would push: %s", branch)
-				} else {
-					forceNeeded := len(mergedBranches) > 0
-					if err := gitRunner.Push(branch, forceNeeded); err != nil {
-						printer.Error("Failed to push %s: %v", branch, err)
+			if !downOnly {
+				for _, branch := range remaining {
+					if branch == trunk {
+						continue
+					}
+					if dryRun {
+						printer.Info("Would push: %s", branch)
 					} else {
-						printer.Info("Pushed: %s", branch)
-						pushedCount++
+						forceNeeded := len(mergedBranches) > 0
+						if err := gitRunner.Push(branch, forceNeeded); err != nil {
+							printer.Error("Failed to push %s: %v", branch, err)
+						} else {
+							printer.Info("Pushed: %s", branch)
+							pushedCount++
+						}
 					}
 				}
 			}
@@ -1082,6 +1085,7 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be pushed without pushing")
+	cmd.Flags().BoolVar(&downOnly, "down", false, "Only pull changes from remote, skip pushing")
 
 	return cmd
 }

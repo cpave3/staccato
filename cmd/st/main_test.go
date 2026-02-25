@@ -981,3 +981,34 @@ func TestBackup(t *testing.T) {
 		assertContains(t, out, "no branches")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// TestSyncDown
+// ---------------------------------------------------------------------------
+
+func TestSyncDown(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create branch with a commit
+	runSt(t, "new", "d1")
+	repo.CreateFile("d1.txt", "d1")
+	repo.AddAndCommit("d1 commit")
+
+	// Run sync --down
+	runSt(t, "-v", "sync", "--down")
+
+	// d1 should still be in graph
+	if !graphContains(t, repo, "d1") {
+		t.Error("d1 should still be in graph")
+	}
+
+	// d1 should NOT have been pushed to origin
+	out, _ := repo.RunGit("ls-remote", "--heads", "origin", "d1")
+	if strings.TrimSpace(out) != "" {
+		t.Error("d1 should NOT have been pushed to origin with --down flag")
+	}
+}
