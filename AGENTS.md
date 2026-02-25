@@ -79,7 +79,7 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 - `selected` field holds result; `quitting` indicates exit
 - `Enter` selects, `q`/`Esc` quits without selection
 
-`attachTUI` supports recursive attachment: if selected parent isn't tracked, recursively prompts to attach it first.
+`attachTUI` supports recursive attachment: if selected parent isn't tracked, recursively prompts to attach it first. Press `r` to set a branch as root (stops recursion). Trunk branches (`main`, `master`, `develop`, `trunk`) are auto-detected as roots. Solo roots (root with no branches in graph) fall through to TUI instead of showing "already in stack".
 
 `switchTUI` renders tree with depth-based indentation, supports `n/N` for search match navigation.
 
@@ -92,7 +92,7 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 | `insert <branch>` | Insert before current, reparent+restack downstream, checkout new | — |
 | `restack` | Rebase lineage onto parents | `--to-current` |
 | `continue` | Resume restack after conflict | — |
-| `attach [branch]` | Adopt branch into stack (TUI or auto) | `--auto` |
+| `attach [branch]` | Adopt branch into stack (TUI or auto) | `--auto`, `--parent` |
 | `restore [branch]` | Restore from automatic backup | `--all` |
 | `sync` | Push to remote | `--dry-run` |
 | `backup` | Manual snapshot of all stack branches | — |
@@ -166,6 +166,16 @@ go build -o st ./cmd/st/
 - `github.com/charmbracelet/bubbletea` — TUI framework
 - `github.com/charmbracelet/bubbles` — TUI components (list)
 - `github.com/charmbracelet/lipgloss` — Terminal styling
+
+## Development Process
+
+All feature development and bug fixes MUST follow TDD (Test-Driven Development):
+
+1. **RED** — Write failing tests first. Tests should describe the expected behavior.
+2. **GREEN** — Write the minimal implementation to make tests pass.
+3. **REFACTOR** — Clean up duplication while keeping tests green.
+
+Run `go test ./cmd/st/ -v -count=1` for E2E tests and `go test ./... -v -count=1` for all tests.
 
 ## Code Style
 

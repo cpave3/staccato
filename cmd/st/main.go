@@ -21,7 +21,20 @@ import (
 var (
 	verbose bool
 	rootCmd *cobra.Command
+
+	// trunkBranches are common trunk/root branch names that should be auto-detected as roots.
+	trunkBranches = []string{"main", "master", "develop", "trunk"}
 )
+
+// isTrunkBranch returns true if the branch name is a common trunk/root branch.
+func isTrunkBranch(name string) bool {
+	for _, t := range trunkBranches {
+		if name == t {
+			return true
+		}
+	}
+	return false
+}
 
 // TUI Types for interactive commands
 
@@ -41,6 +54,7 @@ type attachTUI struct {
 	branchToAttach string
 	candidates     []attachCandidate
 	selected       string
+	setAsRoot      bool
 	searchMode     bool
 	searchQuery    string
 	matches        []int
@@ -96,6 +110,15 @@ func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.searchQuery = ""
 			a.updateMatches()
 			return a, nil
+		case "r":
+			// Set selected branch as root (stop recursion here)
+			idx := a.list.Index()
+			if idx >= 0 && idx < len(a.candidates) {
+				a.selected = a.candidates[idx].name
+				a.setAsRoot = true
+				a.quitting = true
+				return a, tea.Quit
+			}
 		case "enter":
 			// Use index instead of type assertion (Bubble Tea list doesn't preserve custom types)
 			idx := a.list.Index()
@@ -191,7 +214,7 @@ func (a attachTUI) View() string {
 		}
 	}
 
-	b.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("  ↑↓ navigate  / search  enter select  q quit"))
+	b.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("  ↑↓ navigate  / search  enter select  r set-root  q quit"))
 
 	return b.String()
 }
@@ -612,10 +635,19 @@ func continueCmd() *cobra.Command {
 	}
 }
 
-// attachRecursively attaches a branch and continues up the chain until reaching root or tracked branch
+// attachInteractive launches the TUI to attach a branch, recursing up the chain as needed.
+// Unlike attachRecursively, this always shows the TUI even if the branch is already tracked.
+func attachInteractive(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string) error {
+	return doAttachRecursively(g, gitRunner, repoPath, attacher, branchToAttach, false)
+}
+
+// attachRecursively attaches a branch, stopping if already tracked (used for recursive parent attachment).
 func attachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string) error {
-	// Check if already in graph
-	if attacher.IsBranchInGraph(g, branchToAttach) {
+	return doAttachRecursively(g, gitRunner, repoPath, attacher, branchToAttach, true)
+}
+
+func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string, stopIfTracked bool) error {
+	if stopIfTracked && attacher.IsBranchInGraph(g, branchToAttach) {
 		return nil // Already attached, stop recursion
 	}
 
@@ -678,6 +710,26 @@ func attachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, a
 
 	// Handle result
 	if m, ok := finalModel.(attachTUI); ok && m.selected != "" {
+		// Set as root if: user pressed 'r' or branch is a trunk name
+		if m.setAsRoot || isTrunkBranch(m.selected) {
+			g.Root = m.selected
+			if err := saveContext(g, repoPath); err != nil {
+				return fmt.Errorf("failed to save graph: %w", err)
+			}
+			fmt.Printf("✔ Set '%s' as stack root\n", m.selected)
+
+			// Now attach the branch under the new root
+			err := attacher.AttachBranch(g, branchToAttach, m.selected)
+			if err != nil {
+				return fmt.Errorf("failed to attach branch: %w", err)
+			}
+			if err := saveContext(g, repoPath); err != nil {
+				return fmt.Errorf("failed to save graph: %w", err)
+			}
+			fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, m.selected)
+			return nil
+		}
+
 		// RECURSIVE STEP: If the selected parent isn't in the graph yet, attach it first
 		if !attacher.IsBranchInGraph(g, m.selected) && m.selected != g.Root {
 			fmt.Printf("\nParent '%s' is not yet in the stack. Attaching it first...\n", m.selected)
@@ -746,14 +798,9 @@ Use --parent to specify the parent directly. Works for both new and already-trac
 				return nil
 			}
 
-			// If already tracked, tell the user how to relocate
-			if attacher.IsBranchInGraph(g, branchToAttach) {
-				fmt.Printf("'%s' is already in the stack. Use --parent to relocate it:\n  st attach %s --parent <new-parent>\n", branchToAttach, branchToAttach)
-				return nil
-			}
-
 			// Interactive TUI mode with recursive attachment
-			return attachRecursively(g, gitRunner, repoPath, attacher, branchToAttach)
+			// Always launch TUI — even for tracked branches (allows building/modifying stack interactively)
+			return attachInteractive(g, gitRunner, repoPath, attacher, branchToAttach)
 		},
 	}
 
@@ -767,7 +814,18 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 	// Validate parent exists in graph or is root
 	if parent != g.Root {
 		if _, exists := g.GetBranch(parent); !exists {
-			return fmt.Errorf("parent '%s' is not in the stack", parent)
+			// If the parent is a trunk branch and exists in git, auto-set as root
+			if isTrunkBranch(parent) {
+				exists, err := gitRunner.BranchExists(parent)
+				if err == nil && exists {
+					g.Root = parent
+					fmt.Printf("✔ Set '%s' as stack root\n", parent)
+				} else {
+					return fmt.Errorf("parent '%s' is not in the stack", parent)
+				}
+			} else {
+				return fmt.Errorf("parent '%s' is not in the stack", parent)
+			}
 		}
 	}
 
@@ -1027,9 +1085,9 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				}
 			}
 
-			// 7. Restack remaining if branches were removed
+			// 7. Restack remaining branches (after trunk update or branch removal)
 			restackedCount := 0
-			if len(mergedBranches) > 0 && len(g.Branches) > 0 {
+			if len(g.Branches) > 0 {
 				backupMgr := backup.NewManager(gitRunner, repoPath)
 				engine := restack.NewEngine(gitRunner, backupMgr)
 				result, err := engine.Restack(g, trunk)

@@ -467,6 +467,66 @@ func TestAttach(t *testing.T) {
 		}
 	})
 
+	t.Run("tui_r_sets_root_flag", func(t *testing.T) {
+		candidates := []attachCandidate{
+			{name: "main", isCurrent: false},
+			{name: "develop", isCurrent: false},
+		}
+		var items []list.Item
+		for _, c := range candidates {
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			candidates:     candidates,
+		}
+
+		// Press 'r' — should set selected to current item AND setAsRoot = true
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m := updated.(attachTUI)
+		if m.selected != "main" {
+			t.Errorf("selected = %q, want main", m.selected)
+		}
+		if !m.setAsRoot {
+			t.Error("setAsRoot should be true after pressing r")
+		}
+	})
+
+	t.Run("tui_r_quits", func(t *testing.T) {
+		candidates := []attachCandidate{
+			{name: "main", isCurrent: false},
+		}
+		var items []list.Item
+		for _, c := range candidates {
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			candidates:     candidates,
+		}
+
+		// Press 'r' — should also set quitting = true
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		m := updated.(attachTUI)
+		if !m.quitting {
+			t.Error("quitting should be true after pressing r")
+		}
+	})
+
 	t.Run("relocates_already_attached_branch", func(t *testing.T) {
 		repo, root := setupRepoWithStack(t)
 
@@ -511,6 +571,106 @@ func TestAttach(t *testing.T) {
 		// Attach m1 to same parent (root) — should succeed without error
 		out := runSt(t, "attach", "m1", "--parent", root)
 		assertContains(t, out, "already has parent")
+	})
+
+	t.Run("solo_root_launches_tui_instead_of_noop", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		// Create a second branch so TUI would have a candidate
+		repo.CreateBranch("feature-x")
+		repo.CreateFile("fx.txt", "feature x")
+		repo.AddAndCommit("feature-x commit")
+		repo.Checkout("main")
+
+		// No graph file exists yet. getContext() will auto-create one with main as root.
+		// Running `st attach` on a solo root should try to launch the TUI (which fails
+		// in test because there's no TTY). The key assertion: it does NOT silently succeed
+		// or print "already in the stack".
+		out := runStExpectError(t, "attach")
+		if strings.Contains(out, "already in the stack") {
+			t.Error("solo root should not be reported as 'already in the stack'")
+		}
+		// The error should be about TTY (TUI tried to launch)
+		assertContains(t, out, "TTY")
+	})
+
+	t.Run("solo_root_with_parent_flag_attaches", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create feature branch off root
+		repo.CreateBranch("feature-x")
+		repo.CreateFile("fx.txt", "feature x")
+		repo.AddAndCommit("feature-x commit")
+
+		// Attach feature-x with --parent <root>. root is the auto-created root.
+		// This should work without needing trunk detection since root IS already the graph root.
+		runSt(t, "attach", "feature-x", "--parent", root)
+
+		if !graphContains(t, repo, "feature-x") {
+			t.Error("feature-x should be in graph")
+		}
+		g := loadGraph(t, repo)
+		if g.Branches["feature-x"].Parent != root {
+			t.Errorf("feature-x parent = %q, want %q", g.Branches["feature-x"].Parent, root)
+		}
+	})
+
+	t.Run("attach_parent_flag_with_untracked_parent_and_trunk", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		// Create a develop branch (trunk name) that is NOT in the stack
+		repo.CreateBranch("develop")
+		repo.CreateFile("dev.txt", "develop content")
+		repo.AddAndCommit("develop commit")
+
+		// Create a feature branch off develop
+		repo.CreateBranch("feature-y")
+		repo.CreateFile("fy.txt", "feature y")
+		repo.AddAndCommit("feature-y commit")
+
+		// Attach feature-y with --parent develop.
+		// develop is a trunk name and exists as a git branch but isn't in the stack.
+		// Should auto-set develop as root and attach succeeds.
+		runSt(t, "attach", "feature-y", "--parent", "develop")
+
+		g := loadGraph(t, repo)
+		if g.Root != "develop" {
+			t.Errorf("root = %q, want develop", g.Root)
+		}
+		if !graphContains(t, repo, "feature-y") {
+			t.Error("feature-y should be in graph after attach")
+		}
+		if g.Branches["feature-y"].Parent != "develop" {
+			t.Errorf("feature-y parent = %q, want develop", g.Branches["feature-y"].Parent)
+		}
+	})
+
+	t.Run("attach_parent_flag_with_tracked_branch_and_trunk_parent", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create a tracked branch
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1 content")
+		repo.AddAndCommit("f1 commit")
+
+		// Create a develop branch (trunk name) not tracked
+		repo.Checkout(root)
+		repo.CreateBranch("develop")
+		repo.CreateFile("dev.txt", "develop content")
+		repo.AddAndCommit("develop commit")
+
+		// Relocate f1 under develop (trunk name, not tracked).
+		// Should auto-set develop as root and relocate.
+		repo.Checkout("f1")
+		runSt(t, "attach", "f1", "--parent", "develop")
+
+		g := loadGraph(t, repo)
+		if g.Root != "develop" {
+			t.Errorf("root = %q, want develop", g.Root)
+		}
+		if g.Branches["f1"].Parent != "develop" {
+			t.Errorf("f1 parent = %q, want develop", g.Branches["f1"].Parent)
+		}
 	})
 
 	t.Run("attach_with_parent_flag", func(t *testing.T) {
@@ -1010,6 +1170,54 @@ func TestSyncDown(t *testing.T) {
 	out, _ := repo.RunGit("ls-remote", "--heads", "origin", "d1")
 	if strings.TrimSpace(out) != "" {
 		t.Error("d1 should NOT have been pushed to origin with --down flag")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncDownRestacks
+// ---------------------------------------------------------------------------
+
+func TestSyncDownRestacks(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: root -> f1
+	runSt(t, "new", "f1")
+	repo.CreateFile("f1.txt", "f1")
+	repo.AddAndCommit("f1 commit")
+
+	// Push f1 so it has a remote tracking branch
+	repo.RunGit("push", "origin", "f1")
+
+	// Simulate upstream change: clone origin, commit, push back
+	tmpClone, _ := os.MkdirTemp("", "st-clone-*")
+	defer os.RemoveAll(tmpClone)
+	cloneCmd := exec.Command("git", "clone", repo.OriginDir(), tmpClone)
+	cloneCmd.Run()
+	exec.Command("git", "-C", tmpClone, "config", "user.email", "other@example.com").Run()
+	exec.Command("git", "-C", tmpClone, "config", "user.name", "Other").Run()
+	os.WriteFile(filepath.Join(tmpClone, "upstream-change.txt"), []byte("new upstream content"), 0644)
+	exec.Command("git", "-C", tmpClone, "add", ".").Run()
+	exec.Command("git", "-C", tmpClone, "commit", "-m", "upstream commit").Run()
+	exec.Command("git", "-C", tmpClone, "push", "origin", root).Run()
+
+	// Run sync --down
+	repo.Checkout("f1")
+	runSt(t, "-v", "sync", "--down")
+
+	// trunk should have the upstream change (fast-forwarded)
+	repo.Checkout(root)
+	if !repo.FileExists("upstream-change.txt") {
+		t.Fatal("trunk should have upstream-change.txt after sync --down")
+	}
+
+	// f1 should also have the upstream change (restacked onto updated trunk)
+	repo.Checkout("f1")
+	if !repo.FileExists("upstream-change.txt") {
+		t.Error("f1 should have upstream-change.txt after sync --down restacks onto updated trunk")
 	}
 }
 
