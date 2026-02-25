@@ -702,13 +702,15 @@ func attachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, a
 
 func attachCmd() *cobra.Command {
 	var autoSelect bool
+	var parentFlag string
 
 	cmd := &cobra.Command{
 		Use:   "attach [branch-name]",
 		Short: "Adopt an unknown branch into the stack",
 		Long: `Attaches a branch that was created outside of st to the stack graph.
 If no branch is specified, uses the current branch.
-Opens an interactive TUI to select the parent branch (use --auto to skip TUI).`,
+Opens an interactive TUI to select the parent branch (use --auto to skip TUI).
+Use --parent to specify the parent directly. Works for both new and already-tracked branches.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, _, repoPath, err := getContext()
@@ -725,6 +727,11 @@ Opens an interactive TUI to select the parent branch (use --auto to skip TUI).`,
 
 			attacher := attach.NewAttacher(gitRunner, nil)
 
+			// If --parent flag is set, use direct parent specification
+			if parentFlag != "" {
+				return attachWithParent(g, gitRunner, repoPath, attacher, branchToAttach, parentFlag)
+			}
+
 			// If --auto flag is set, use auto-attach mode
 			if autoSelect {
 				err = attacher.AutoAttach(g, branchToAttach, true)
@@ -737,14 +744,102 @@ Opens an interactive TUI to select the parent branch (use --auto to skip TUI).`,
 				return nil
 			}
 
+			// If already tracked, tell the user how to relocate
+			if attacher.IsBranchInGraph(g, branchToAttach) {
+				fmt.Printf("'%s' is already in the stack. Use --parent to relocate it:\n  st attach %s --parent <new-parent>\n", branchToAttach, branchToAttach)
+				return nil
+			}
+
 			// Interactive TUI mode with recursive attachment
 			return attachRecursively(g, gitRunner, repoPath, attacher, branchToAttach)
 		},
 	}
 
 	cmd.Flags().BoolVar(&autoSelect, "auto", false, "Automatically select the best parent candidate (skip TUI)")
+	cmd.Flags().StringVar(&parentFlag, "parent", "", "Specify parent branch directly (skip TUI)")
 
 	return cmd
+}
+
+func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach, parent string) error {
+	// Validate parent exists in graph or is root
+	if parent != g.Root {
+		if _, exists := g.GetBranch(parent); !exists {
+			return fmt.Errorf("parent '%s' is not in the stack", parent)
+		}
+	}
+
+	isRelocate := attacher.IsBranchInGraph(g, branchToAttach)
+
+	if isRelocate {
+		currentParent := g.Branches[branchToAttach].Parent
+		if currentParent == parent {
+			fmt.Printf("'%s' already has parent '%s'\n", branchToAttach, parent)
+			return nil
+		}
+
+		// Create backups before any destructive operations
+		backupMgr := backup.NewManager(gitRunner, repoPath)
+		downstreamBranches := restack.GetDownstreamBranches(g, branchToAttach)
+		affectedBranches := append([]string{branchToAttach}, downstreamBranches...)
+
+		backups, err := backupMgr.CreateBackupsForStack(affectedBranches)
+		if err != nil {
+			return fmt.Errorf("failed to create backups: %w", err)
+		}
+
+		// Update parent in graph
+		g.Branches[branchToAttach].Parent = parent
+
+		// Rebase the branch itself onto the new parent
+		if err := gitRunner.CheckoutBranch(branchToAttach); err != nil {
+			backupMgr.RestoreStack(backups)
+			return fmt.Errorf("failed to checkout %s: %w", branchToAttach, err)
+		}
+		if err := gitRunner.Rebase(parent); err != nil {
+			backupMgr.RestoreStack(backups)
+			return fmt.Errorf("failed to rebase %s onto %s: %w", branchToAttach, parent, err)
+		}
+
+		// Update branch metadata
+		newBaseSHA, _ := gitRunner.GetCommitSHA(parent)
+		newHeadSHA, _ := gitRunner.GetCommitSHA(branchToAttach)
+		g.UpdateBranch(branchToAttach, newBaseSHA, newHeadSHA)
+
+		if err := saveContext(g, repoPath); err != nil {
+			return fmt.Errorf("failed to save graph: %w", err)
+		}
+
+		// Restack downstream branches if any
+		if len(downstreamBranches) > 0 {
+			engine := restack.NewEngine(gitRunner, backupMgr)
+			result, err := engine.Restack(g, branchToAttach)
+			if err != nil {
+				if result.Conflicts {
+					return fmt.Errorf("conflict during restack at '%s'", result.ConflictsAt)
+				}
+				backupMgr.RestoreStack(backups)
+				return fmt.Errorf("restack failed: %w", err)
+			}
+		}
+
+		backupMgr.CleanupStackBackups(affectedBranches)
+
+		fmt.Printf("✔ Relocated '%s' under '%s'\n", branchToAttach, parent)
+		return nil
+	}
+
+	// New attachment
+	if err := attacher.AttachBranch(g, branchToAttach, parent); err != nil {
+		return fmt.Errorf("failed to attach branch: %w", err)
+	}
+
+	if err := saveContext(g, repoPath); err != nil {
+		return fmt.Errorf("failed to save graph: %w", err)
+	}
+
+	fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, parent)
+	return nil
 }
 
 func restoreCmd() *cobra.Command {
@@ -821,11 +916,11 @@ func syncCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Push branches to remote",
-		Long: `Explicitly pushes all branches in the stack to the remote.
-This is an offline-first tool, so push is always explicit.`,
+		Short: "Fetch, detect merged branches, restack & push",
+		Long: `Fetches from remote, detects branches merged on GitHub, removes them from
+the stack graph (reparenting children), restacks remaining branches, and pushes.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			g, git, printer, _, err := getContext()
+			g, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {
 				return err
 			}
@@ -834,34 +929,131 @@ This is an offline-first tool, so push is always explicit.`,
 				printer.DryRunNotice()
 			}
 
-			// Check if we have a remote
-			hasRemote, _ := git.HasRemote()
+			// 1. Check remote
+			hasRemote, _ := gitRunner.HasRemote()
 			if !hasRemote {
 				return fmt.Errorf("no remote configured")
 			}
 
-			currentBranch, _ := git.GetCurrentBranch()
-			attacher := attach.NewAttacher(git, printer)
-			rootBranch := attacher.FindRoot(g, currentBranch)
-			if rootBranch == "" {
-				rootBranch = g.Root
+			originalBranch, _ := gitRunner.GetCurrentBranch()
+
+			// 2. Fetch with prune
+			printer.SyncFetching()
+			if err := gitRunner.FetchPrune(); err != nil {
+				return fmt.Errorf("fetch failed: %w", err)
 			}
 
-			// Get all branches in stack (excluding root)
-			branches := restack.GetStackBranches(g, rootBranch)
+			// 3. Fast-forward trunk
+			trunk := g.Root
+			if gitRunner.RemoteBranchExists(trunk) {
+				if originalBranch == trunk {
+					if err := gitRunner.MergeFFOnly("origin/" + trunk); err != nil {
+						printer.Info("Could not fast-forward '%s' (may have local changes)", trunk)
+					} else {
+						printer.SyncTrunkUpdated(trunk)
+					}
+				} else {
+					if err := gitRunner.FastForwardBranch(trunk, "origin/"+trunk); err != nil {
+						printer.Info("Could not fast-forward '%s'", trunk)
+					} else {
+						printer.SyncTrunkUpdated(trunk)
+					}
+				}
+			}
 
-			// Push each branch
-			pushedCount := 0
-			for _, branch := range branches {
-				if branch == g.Root {
-					continue
+			// 4. Detect merged branches (topological order)
+			sorted, err := restack.TopologicalSort(g, trunk)
+			if err != nil {
+				return fmt.Errorf("failed to sort branches: %w", err)
+			}
+
+			var mergedBranches []string
+			for _, branch := range sorted {
+				merged := false
+
+				// Check regular merge: branch is ancestor of origin/trunk
+				isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
+				if err == nil && isAnc {
+					merged = true
 				}
 
+				// Check squash merge: remote branch gone AND diff to trunk is empty
+				if !merged && !gitRunner.RemoteBranchExists(branch) {
+					diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
+					if err == nil && diffEmpty {
+						merged = true
+					}
+				}
+
+				if merged {
+					mergedBranches = append(mergedBranches, branch)
+					printer.SyncMergedDetected(branch)
+				}
+			}
+
+			// 5. Remove merged branches
+			if len(mergedBranches) == 0 {
+				printer.SyncNoMergedBranches()
+			}
+
+			for _, branch := range mergedBranches {
+				b, exists := g.GetBranch(branch)
+				if !exists {
+					continue
+				}
+				parent := b.Parent
+
+				g.ReparentChildren(branch, parent)
+				g.RemoveBranch(branch)
+
+				// If user is on this branch, checkout trunk
+				cur, _ := gitRunner.GetCurrentBranch()
+				if cur == branch {
+					gitRunner.CheckoutBranch(trunk)
+					originalBranch = trunk
+				}
+
+				gitRunner.DeleteBranch(branch, true)
+				printer.SyncBranchRemoved(branch)
+			}
+
+			// 6. Save graph if branches were removed
+			if len(mergedBranches) > 0 {
+				if err := saveContext(g, repoPath); err != nil {
+					return fmt.Errorf("failed to save graph: %w", err)
+				}
+			}
+
+			// 7. Restack remaining if branches were removed
+			restackedCount := 0
+			if len(mergedBranches) > 0 && len(g.Branches) > 0 {
+				backupMgr := backup.NewManager(gitRunner, repoPath)
+				engine := restack.NewEngine(gitRunner, backupMgr)
+				result, err := engine.Restack(g, trunk)
+				if err != nil {
+					if result != nil && result.Conflicts {
+						printer.ConflictDetected(result.ConflictsAt)
+						saveContext(g, repoPath)
+						return fmt.Errorf("conflict during restack - resolve and run 'st continue'")
+					}
+					return fmt.Errorf("restack failed: %w", err)
+				}
+				restackedCount = len(result.Completed)
+				saveContext(g, repoPath)
+			}
+
+			// 8. Push remaining branches (force-with-lease since they may have been rebased)
+			remaining := restack.GetStackBranches(g, trunk)
+			pushedCount := 0
+			for _, branch := range remaining {
+				if branch == trunk {
+					continue
+				}
 				if dryRun {
 					printer.Info("Would push: %s", branch)
 				} else {
-					err := git.Push(branch, false)
-					if err != nil {
+					forceNeeded := len(mergedBranches) > 0
+					if err := gitRunner.Push(branch, forceNeeded); err != nil {
 						printer.Error("Failed to push %s: %v", branch, err)
 					} else {
 						printer.Info("Pushed: %s", branch)
@@ -870,7 +1062,20 @@ This is an offline-first tool, so push is always explicit.`,
 				}
 			}
 
-			printer.SyncComplete(pushedCount, dryRun)
+			// 9. Restore original branch if it still exists
+			if originalBranch != "" {
+				exists, _ := gitRunner.BranchExists(originalBranch)
+				if exists {
+					gitRunner.CheckoutBranch(originalBranch)
+				}
+			}
+
+			// 10. Print summary
+			if dryRun {
+				printer.SyncComplete(len(remaining)-1, dryRun)
+			} else {
+				printer.SyncSummary(len(mergedBranches), restackedCount, pushedCount)
+			}
 
 			return nil
 		},

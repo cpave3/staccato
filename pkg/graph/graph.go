@@ -76,6 +76,15 @@ func (g *Graph) GetChildren(parentName string) []*Branch {
 	return children
 }
 
+// ReparentChildren sets the parent of all children of branchName to newParent
+func (g *Graph) ReparentChildren(branchName, newParent string) {
+	for _, branch := range g.Branches {
+		if branch.Parent == branchName {
+			branch.Parent = newParent
+		}
+	}
+}
+
 // ValidateNoCycle checks if adding a branch would create a cycle
 func (g *Graph) ValidateNoCycle(branchName, parentName string) error {
 	// Check if parent would create a cycle

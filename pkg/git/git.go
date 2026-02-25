@@ -148,6 +148,58 @@ func (r *Runner) Fetch() error {
 	return err
 }
 
+// FetchPrune fetches from origin and prunes deleted remote branches
+func (r *Runner) FetchPrune() error {
+	_, err := r.Run("fetch", "origin", "--prune")
+	return err
+}
+
+// RemoteBranchExists checks if a branch exists on the remote
+func (r *Runner) RemoteBranchExists(name string) bool {
+	_, err := r.Run("rev-parse", "--verify", "refs/remotes/origin/"+name)
+	return err == nil
+}
+
+// IsAncestor checks if ancestor is an ancestor of commit
+func (r *Runner) IsAncestor(ancestor, commit string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, commit)
+	cmd.Dir = r.repoPath
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	// Exit code 1 means not an ancestor (not an error)
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// DiffIsEmpty checks if there are no differences between two refs
+func (r *Runner) DiffIsEmpty(a, b string) (bool, error) {
+	output, err := r.Run("diff", a+".."+b)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) == "", nil
+}
+
+// FastForwardBranch updates a branch ref to point to target without checkout
+func (r *Runner) FastForwardBranch(branch, target string) error {
+	sha, err := r.GetCommitSHA(target)
+	if err != nil {
+		return fmt.Errorf("failed to resolve %s: %w", target, err)
+	}
+	_, err = r.Run("update-ref", "refs/heads/"+branch, sha)
+	return err
+}
+
+// MergeFFOnly performs a fast-forward only merge
+func (r *Runner) MergeFFOnly(target string) error {
+	_, err := r.Run("merge", "--ff-only", target)
+	return err
+}
+
 // HasRemote checks if the repository has a remote configured
 func (r *Runner) HasRemote() (bool, error) {
 	output, err := r.Run("remote")

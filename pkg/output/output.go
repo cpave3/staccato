@@ -149,13 +149,44 @@ func (p *Printer) AttachPrompt(branch string, candidates []string) {
 	p.Println("    [0] Other (specify manually)")
 }
 
-// SyncComplete prints sync completion message
-func (p *Printer) SyncComplete(count int, dryRun bool) {
+// SyncFetching prints fetching status
+func (p *Printer) SyncFetching() {
+	p.Println("Fetching from remote...")
+}
+
+// SyncTrunkUpdated prints trunk update message
+func (p *Printer) SyncTrunkUpdated(trunk string) {
+	p.Success("Updated '%s' to match remote", trunk)
+}
+
+// SyncMergedDetected prints that a merged branch was detected
+func (p *Printer) SyncMergedDetected(branch string) {
+	p.Println("  %s Merged: '%s'", SuccessIcon, branch)
+}
+
+// SyncBranchRemoved prints that a branch was removed from the stack
+func (p *Printer) SyncBranchRemoved(branch string) {
+	p.Info("Removed '%s' from stack and deleted local branch", branch)
+}
+
+// SyncNoMergedBranches prints when no merged branches are found
+func (p *Printer) SyncNoMergedBranches() {
+	p.Println("No merged branches detected.")
+}
+
+// SyncComplete prints sync completion summary
+func (p *Printer) SyncComplete(pushed int, dryRun bool) {
 	if dryRun {
-		p.Info("Dry run: would have pushed %d branch(es)", count)
+		p.Info("Dry run: would have pushed %d branch(es)", pushed)
 	} else {
-		p.Success("Pushed %d branch(es) to remote", count)
+		p.Success("Pushed %d branch(es) to remote", pushed)
 	}
+}
+
+// SyncSummary prints the full sync summary
+func (p *Printer) SyncSummary(merged, restacked, pushed int) {
+	p.Println("")
+	p.Success("Sync complete: %d merged, %d restacked, %d pushed", merged, restacked, pushed)
 }
 
 // Help prints general help
@@ -170,7 +201,7 @@ func (p *Printer) Help() {
 	p.Println("  continue           Resume restack after conflict resolution")
 	p.Println("  attach             Adopt an unknown branch into the stack")
 	p.Println("  restore [branch]   Restore branch(es) from backup")
-	p.Println("  sync [--dry-run]   Push branches to remote")
+	p.Println("  sync [--dry-run]   Fetch, detect merged branches, restack & push")
 	p.Println("  log                Display stack hierarchy")
 	p.Println("")
 	p.Println("Options:")

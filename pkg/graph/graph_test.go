@@ -131,6 +131,28 @@ func TestGraph_ReturnsErrorForNonExistentFile(t *testing.T) {
 	}
 }
 
+func TestGraph_ReparentChildren(t *testing.T) {
+	g := NewGraph("main")
+	g.AddBranch("m1", "main", "a", "b")
+	g.AddBranch("m2", "m1", "b", "c")
+	g.AddBranch("m3", "m1", "b", "d")
+	g.AddBranch("other", "main", "a", "e")
+
+	g.ReparentChildren("m1", "main")
+
+	// m2 and m3 should now have parent "main"
+	if b, _ := g.GetBranch("m2"); b.Parent != "main" {
+		t.Errorf("m2 parent = %q, want main", b.Parent)
+	}
+	if b, _ := g.GetBranch("m3"); b.Parent != "main" {
+		t.Errorf("m3 parent = %q, want main", b.Parent)
+	}
+	// "other" should be unchanged
+	if b, _ := g.GetBranch("other"); b.Parent != "main" {
+		t.Errorf("other parent = %q, want main", b.Parent)
+	}
+}
+
 func TestGraph_CreatesDirectoryOnSave(t *testing.T) {
 	tmpDir := t.TempDir()
 	graphPath := filepath.Join(tmpDir, "nested", "deep", "graph.json")

@@ -177,6 +177,20 @@ func (r *GitRepo) WriteFile(filename, content string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
+// RunGit runs a git command and returns the output
+func (r *GitRepo) RunGit(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Dir
+	cmd.Env = r.gitEnv()
+	output, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
+}
+
+// OriginDir returns the path to the bare origin repo (empty if no remote)
+func (r *GitRepo) OriginDir() string {
+	return r.origin
+}
+
 // InitStack initializes a stack graph for testing
 func (r *GitRepo) InitStack() error {
 	// Create initial commit
