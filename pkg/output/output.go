@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/user/st/pkg/forge"
 	"github.com/user/st/pkg/graph"
 )
 
@@ -136,6 +137,73 @@ func (p *Printer) StackLog(g *graph.Graph, currentBranch string) {
 
 	printBranch(g.Root, 0)
 	p.Println("")
+}
+
+// StackStatus prints the stack hierarchy with PR status annotations
+func (p *Printer) StackStatus(g *graph.Graph, currentBranch string, prStatus map[string]*forge.PRStatusInfo) {
+	p.Println("")
+	p.Println("Stack status:")
+
+	var printBranch func(branch string, depth int, isRoot bool)
+	printBranch = func(branch string, depth int, isRoot bool) {
+		indent := strings.Repeat("  ", depth)
+		icon := BranchIcon
+		if branch == currentBranch {
+			icon = CurrentIcon
+		}
+
+		suffix := ""
+		if !isRoot {
+			if info, ok := prStatus[branch]; ok && info.HasPR {
+				suffix = " — " + formatPRStatus(info)
+			} else {
+				suffix = " — No PR"
+			}
+		}
+
+		p.Println("%s%s %s%s", indent, icon, branch, suffix)
+
+		children := g.GetChildren(branch)
+		for _, child := range children {
+			printBranch(child.Name, depth+1, false)
+		}
+	}
+
+	printBranch(g.Root, 0, true)
+	p.Println("")
+}
+
+func formatPRStatus(info *forge.PRStatusInfo) string {
+	var parts []string
+
+	switch info.State {
+	case "MERGED":
+		parts = append(parts, fmt.Sprintf("#%d %s Merged", info.Number, SuccessIcon))
+	case "CLOSED":
+		parts = append(parts, fmt.Sprintf("#%d %s Closed", info.Number, ErrorIcon))
+	case "OPEN":
+		if info.IsDraft {
+			parts = append(parts, fmt.Sprintf("#%d Draft", info.Number))
+		} else {
+			switch info.ReviewStatus {
+			case "APPROVED":
+				parts = append(parts, fmt.Sprintf("#%d %s Approved", info.Number, SuccessIcon))
+			case "CHANGES_REQUESTED":
+				parts = append(parts, fmt.Sprintf("#%d %s Changes requested", info.Number, WarningIcon))
+			default:
+				parts = append(parts, fmt.Sprintf("#%d Review pending", info.Number))
+			}
+		}
+
+		switch info.CheckStatus {
+		case "fail":
+			parts = append(parts, "CI "+ErrorIcon)
+		case "pending":
+			parts = append(parts, "CI pending")
+		}
+	}
+
+	return strings.Join(parts, " | ")
 }
 
 // AttachPrompt prints the attachment prompt
