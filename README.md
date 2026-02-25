@@ -52,10 +52,22 @@ st sync
 | `st insert <branch>` | Insert a branch before current, restack downstream |
 | `st restack` | Restack entire stack in topological order |
 | `st continue` | Resume restack after conflict resolution |
-| `st attach` | Adopt an existing branch into the stack |
+| `st attach [--auto]` | Adopt an existing branch into the stack (opens TUI by default) |
+| `st switch` | Interactive branch switcher with vim-like navigation |
 | `st restore [branch]` | Restore from backup |
 | `st sync [--dry-run]` | Push branches to remote |
 | `st log` | Display stack hierarchy |
+
+### TUI Commands
+
+The `st attach` and `st switch` commands launch interactive TUIs with vim-like navigation:
+- **Arrow keys**: Navigate up/down
+- **/**: Enter search mode  
+- **Enter**: Select item (or exit search and jump to first match)
+- **n/N**: Navigate to next/previous match (after exiting search)
+- **q/Esc**: Quit
+
+**Note:** TUI commands require an interactive terminal (TTY) and won't work in non-interactive environments (CI/CD, scripts). Use `st attach --auto` for non-interactive usage.
 
 ## Features
 
@@ -78,6 +90,16 @@ st sync
 - Retrofit existing manually-created branches
 - Suggests parent candidates based on merge-base
 - Never rewrites history during attachment
+- Interactive TUI mode for visual parent selection
+
+### Interactive TUIs
+Both `st switch` and `st attach-tui` provide vim-like navigation:
+- **Arrow keys**: Navigate up/down
+- **/**: Enter search mode
+- **Enter**: Exit search mode and jump to first match
+- **n/N**: Navigate to next/previous match (after exiting search)
+- **Enter**: Select current item
+- **q/Esc**: Quit
 
 ## Configuration
 

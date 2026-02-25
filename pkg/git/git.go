@@ -177,3 +177,20 @@ func (r *Runner) CopyBranch(source, destination string) error {
 	_, err := r.Run("branch", destination, source)
 	return err
 }
+
+// GetAllBranches returns all local branch names
+func (r *Runner) GetAllBranches() ([]string, error) {
+	output, err := r.Run("branch", "--format=%(refname:short)")
+	if err != nil {
+		return nil, err
+	}
+
+	var branches []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			branches = append(branches, line)
+		}
+	}
+	return branches, nil
+}

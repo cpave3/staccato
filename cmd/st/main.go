@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/user/st/pkg/attach"
 	"github.com/user/st/pkg/backup"
@@ -18,6 +22,177 @@ var (
 	verbose bool
 	rootCmd *cobra.Command
 )
+
+// TUI Types for interactive commands
+
+// attachCandidate represents a potential parent branch for attach TUI
+type attachCandidate struct {
+	name      string
+	isCurrent bool
+}
+
+func (c attachCandidate) FilterValue() string { return c.name }
+
+// attachTUI is the Bubble Tea model for interactive attachment
+type attachTUI struct {
+	list           list.Model
+	git            *git.Runner
+	graph          *graph.Graph
+	branchToAttach string
+	candidates     []attachCandidate
+	selected       string
+	searchMode     bool
+	searchQuery    string
+	matches        []int
+	matchIndex     int
+	quitting       bool
+	err            error
+}
+
+func (a attachTUI) Init() tea.Cmd {
+	return nil
+}
+
+func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		// Handle search mode
+		if a.searchMode {
+			switch msg.String() {
+			case "esc":
+				a.searchMode = false
+				a.searchQuery = ""
+				a.updateMatches()
+				return a, nil
+			case "enter":
+				a.searchMode = false
+				if len(a.matches) > 0 {
+					a.matchIndex = 0
+					idx := a.matches[a.matchIndex]
+					a.list.Select(idx)
+				}
+				return a, nil
+			case "backspace":
+				if len(a.searchQuery) > 0 {
+					a.searchQuery = a.searchQuery[:len(a.searchQuery)-1]
+					a.updateMatches()
+				}
+				return a, nil
+			default:
+				if len(msg.String()) == 1 {
+					a.searchQuery += msg.String()
+					a.updateMatches()
+				}
+				return a, nil
+			}
+		}
+
+		switch msg.String() {
+		case "q", "esc":
+			a.quitting = true
+			return a, tea.Quit
+		case "/":
+			a.searchMode = true
+			a.searchQuery = ""
+			a.updateMatches()
+			return a, nil
+		case "enter":
+			if i, ok := a.list.SelectedItem().(attachCandidate); ok {
+				a.selected = i.name
+				a.quitting = true
+				return a, tea.Quit
+			}
+		}
+
+	case tea.WindowSizeMsg:
+		a.list.SetWidth(msg.Width)
+		a.list.SetHeight(msg.Height - 5)
+		return a, nil
+	}
+
+	var cmd tea.Cmd
+	a.list, cmd = a.list.Update(msg)
+	return a, cmd
+}
+
+func (a *attachTUI) updateMatches() {
+	a.matches = []int{}
+	if a.searchQuery == "" {
+		return
+	}
+	query := strings.ToLower(a.searchQuery)
+	for i, item := range a.list.Items() {
+		if c, ok := item.(attachCandidate); ok {
+			if strings.Contains(strings.ToLower(c.name), query) {
+				a.matches = append(a.matches, i)
+			}
+		}
+	}
+}
+
+func (a attachTUI) View() string {
+	if a.quitting {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4")).Render(fmt.Sprintf("  Attach '%s'", a.branchToAttach)) + "\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("  Select a parent branch from the stack") + "\n\n")
+
+	items := a.list.Items()
+	selectedIdx := a.list.Index()
+
+	for i, item := range items {
+		c := item.(attachCandidate)
+		icon := "○"
+		if c.isCurrent {
+			icon = "●"
+		}
+		line := fmt.Sprintf("%s %s", icon, c.name)
+
+		isMatch := false
+		if a.searchQuery != "" {
+			for _, matchIdx := range a.matches {
+				if matchIdx == i {
+					isMatch = true
+					break
+				}
+			}
+		}
+
+		if i == selectedIdx {
+			if c.isCurrent {
+				line = "> " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#04B575")).Render(line)
+			} else if isMatch {
+				line = "> " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(line)
+			} else {
+				line = "> " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Render(line)
+			}
+		} else {
+			if a.searchMode && !isMatch && a.searchQuery != "" {
+				line = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render(line)
+			} else if c.isCurrent {
+				line = "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#04B575")).Render(line)
+			} else if isMatch {
+				line = "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(line)
+			} else {
+				line = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Render(line)
+			}
+		}
+		b.WriteString(line + "\n")
+	}
+
+	if a.searchMode {
+		b.WriteString("\n" + lipgloss.NewStyle().Background(lipgloss.Color("#333333")).Foreground(lipgloss.Color("#FFFFFF")).Render(fmt.Sprintf("  /%s", a.searchQuery)))
+		if len(a.matches) > 0 {
+			b.WriteString(fmt.Sprintf("  [%d/%d matches]", a.matchIndex+1, len(a.matches)))
+		}
+	}
+
+	b.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("  ↑↓ navigate  / search  enter select  q quit"))
+
+	return b.String()
+}
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
@@ -48,7 +223,7 @@ and lazy attachment for retrofitting existing branches.`,
 	rootCmd.AddCommand(restoreCmd())
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(logCmd())
-	rootCmd.AddCommand(switchCmd())
+	rootCmd.AddCommand(switchCmdFunc())
 }
 
 // getContext loads the graph and git runner for commands
@@ -296,14 +471,24 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 				rootBranch = g.Root
 			}
 
-			printer.RestackStart(rootBranch)
+			// Get only the current lineage (not all branches under root)
+			lineageBranches := restack.GetLineage(g, currentBranch)
+
+			// Check if we're at the tip
+			if !restack.IsBranchAtTip(g, currentBranch) {
+				printer.Warning("You are not at the tip of your stack lineage")
+				printer.Println("  Restacking will affect %d branches in your lineage", len(lineageBranches))
+				printer.Println("  To restack only up to current, use: st restack --to-current")
+			}
+
+			printer.RestackStart(currentBranch)
 
 			// Create backup manager
 			backupMgr := backup.NewManager(git, repoPath)
 
-			// Perform restack
+			// Perform restack for this lineage only
 			engine := restack.NewEngine(git, backupMgr)
-			result, err := engine.Restack(g, rootBranch)
+			result, err := engine.RestackLineage(g, currentBranch, lineageBranches)
 
 			// Save graph state (even if there was an error)
 			saveContext(g, repoPath)
@@ -323,8 +508,7 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 
 			// Cleanup backups on success
 			if len(result.Backups) > 0 {
-				stackBranches := restack.GetStackBranches(g, rootBranch)
-				backupMgr.CleanupStackBackups(stackBranches)
+				backupMgr.CleanupStackBackups(lineageBranches)
 			}
 
 			printer.RestackComplete(len(result.Completed))
@@ -394,48 +578,120 @@ func attachCmd() *cobra.Command {
 		Short: "Adopt an unknown branch into the stack",
 		Long: `Attaches a branch that was created outside of st to the stack graph.
 If no branch is specified, uses the current branch.
-Prompts for parent branch selection unless --auto is used.`,
+Opens an interactive TUI to select the parent branch (use --auto to skip TUI).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			g, git, printer, repoPath, err := getContext()
+			g, gitRunner, _, repoPath, err := getContext()
 			if err != nil {
 				return err
 			}
 
-			var branchName string
+			var branchToAttach string
 			if len(args) > 0 {
-				branchName = args[0]
+				branchToAttach = args[0]
 			} else {
-				branchName, _ = git.GetCurrentBranch()
+				branchToAttach, _ = gitRunner.GetCurrentBranch()
 			}
 
-			attacher := attach.NewAttacher(git, printer)
+			attacher := attach.NewAttacher(gitRunner, nil)
 
-			// Check if already attached
-			if attacher.IsBranchInGraph(g, branchName) {
-				printer.Info("Branch '%s' is already in the stack", branchName)
+			// Check if already in graph
+			if attacher.IsBranchInGraph(g, branchToAttach) {
+				fmt.Printf("Branch '%s' is already in the stack\n", branchToAttach)
 				return nil
 			}
 
-			// Try to auto-attach
-			err = attacher.AutoAttach(g, branchName, autoSelect)
-			if err != nil {
-				// Manual selection needed
-				candidates, _ := attacher.SuggestParents(g, branchName)
-				printer.AttachPrompt(branchName, candidates)
-				return fmt.Errorf("manual parent selection required")
+			// If --auto flag is set, use auto-attach mode
+			if autoSelect {
+				err = attacher.AutoAttach(g, branchToAttach, true)
+				if err != nil {
+					return fmt.Errorf("failed to auto-attach: %w", err)
+				}
+				if err := saveContext(g, repoPath); err != nil {
+					return fmt.Errorf("failed to save graph: %w", err)
+				}
+				return nil
 			}
 
-			// Save graph
-			if err := saveContext(g, repoPath); err != nil {
-				return fmt.Errorf("failed to save graph: %w", err)
+			// Interactive TUI mode
+			currentBranch, _ := gitRunner.GetCurrentBranch()
+			var candidates []attachCandidate
+
+			// Get ALL branches from git (not just those in graph)
+			allBranches, err := gitRunner.GetAllBranches()
+			if err != nil {
+				return fmt.Errorf("failed to list branches: %w", err)
+			}
+
+			// Add all branches as candidates
+			seen := make(map[string]bool)
+			for _, name := range allBranches {
+				if name == branchToAttach {
+					continue // Don't include the branch being attached
+				}
+				if !seen[name] {
+					seen[name] = true
+					candidates = append(candidates, attachCandidate{
+						name:      name,
+						isCurrent: name == currentBranch,
+					})
+				}
+			}
+
+			if len(candidates) == 0 {
+				return fmt.Errorf("no existing branches to use as parent")
+			}
+
+			// Create list items
+			var items []list.Item
+			for _, c := range candidates {
+				items = append(items, c)
+			}
+
+			// Create list
+			l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+			l.SetShowHelp(false)
+			l.SetShowFilter(false)
+			l.SetShowStatusBar(false)
+			l.SetShowTitle(false)
+
+			// Create model
+			model := &attachTUI{
+				list:           l,
+				git:            gitRunner,
+				graph:          g,
+				branchToAttach: branchToAttach,
+				candidates:     candidates,
+			}
+
+			// Run TUI
+			p := tea.NewProgram(model)
+			finalModel, err := p.Run()
+			if err != nil {
+				return fmt.Errorf("error running attach: %w", err)
+			}
+
+			// Handle result
+			if m, ok := finalModel.(*attachTUI); ok && m.selected != "" {
+				// Attach the branch
+				err := attacher.AttachBranch(g, branchToAttach, m.selected)
+				if err != nil {
+					return fmt.Errorf("failed to attach branch: %w", err)
+				}
+
+				// Save graph
+				if err := saveContext(g, repoPath); err != nil {
+					return fmt.Errorf("failed to save graph: %w", err)
+				}
+
+				fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, m.selected)
 			}
 
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVar(&autoSelect, "auto", false, "Automatically select the best parent candidate")
+	cmd.Flags().BoolVar(&autoSelect, "auto", false, "Automatically select the best parent candidate (skip TUI)")
 
 	return cmd
 }
@@ -588,104 +844,6 @@ func logCmd() *cobra.Command {
 			currentBranch, _ := git.GetCurrentBranch()
 
 			printer.StackLog(g, currentBranch)
-
-			return nil
-		},
-	}
-}
-
-func switchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "switch",
-		Short: "Interactively switch to a branch in the stack",
-		Long: `Displays the stack hierarchy with numbered options and lets you
-select a branch to checkout interactively.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			g, git, printer, _, err := getContext()
-			if err != nil {
-				return err
-			}
-
-			currentBranch, _ := git.GetCurrentBranch()
-			attacher := attach.NewAttacher(git, printer)
-			rootBranch := attacher.FindRoot(g, currentBranch)
-			if rootBranch == "" {
-				rootBranch = g.Root
-			}
-
-			// Collect all branches in stack with their display info
-			type branchOption struct {
-				num    int
-				name   string
-				indent int
-			}
-			var options []branchOption
-			num := 1
-
-			var collectBranches func(branch string, depth int)
-			collectBranches = func(branch string, depth int) {
-				options = append(options, branchOption{num: num, name: branch, indent: depth})
-				num++
-
-				children := g.GetChildren(branch)
-				for _, child := range children {
-					collectBranches(child.Name, depth+1)
-				}
-			}
-
-			collectBranches(rootBranch, 0)
-
-			if len(options) == 0 {
-				return fmt.Errorf("no branches in stack")
-			}
-
-			// Display interactive menu
-			printer.Println("")
-			printer.Println("Select a branch to switch to:")
-			printer.Println("")
-
-			for _, opt := range options {
-				indent := ""
-				for i := 0; i < opt.indent; i++ {
-					indent += "  "
-				}
-
-				marker := "○"
-				if opt.name == currentBranch {
-					marker = "●"
-				}
-
-				printer.Println("  [%d] %s%s %s", opt.num, indent, marker, opt.name)
-			}
-
-			printer.Println("")
-			printer.Print("Enter branch number: ")
-
-			// Read user input
-			var choice int
-			_, err = fmt.Scanf("%d", &choice)
-			if err != nil {
-				return fmt.Errorf("invalid input: %w", err)
-			}
-
-			// Validate choice
-			if choice < 1 || choice > len(options) {
-				return fmt.Errorf("invalid selection: %d", choice)
-			}
-
-			selectedBranch := options[choice-1].name
-
-			// Checkout the selected branch
-			err = git.CheckoutBranch(selectedBranch)
-			if err != nil {
-				return fmt.Errorf("failed to checkout %s: %w", selectedBranch, err)
-			}
-
-			if selectedBranch == currentBranch {
-				printer.Info("Already on '%s'", selectedBranch)
-			} else {
-				printer.Success("Switched to '%s'", selectedBranch)
-			}
 
 			return nil
 		},
