@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/user/st/pkg/git"
-	"github.com/user/st/pkg/graph"
+	"github.com/cpave3/staccato/pkg/git"
+	"github.com/cpave3/staccato/pkg/graph"
 )
 
 func TestAttachment_SuggestsCandidates(t *testing.T) {

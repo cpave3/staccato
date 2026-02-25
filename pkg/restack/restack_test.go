@@ -3,7 +3,7 @@ package restack
 import (
 	"testing"
 
-	"github.com/user/st/pkg/graph"
+	"github.com/cpave3/staccato/pkg/graph"
 )
 
 func TestTopologicalSort_SortsBranchesInDependencyOrder(t *testing.T) {

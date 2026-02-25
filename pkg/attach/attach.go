@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/user/st/pkg/git"
-	"github.com/user/st/pkg/graph"
-	"github.com/user/st/pkg/output"
+	"github.com/cpave3/staccato/pkg/git"
+	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/cpave3/staccato/pkg/output"
 )
 
 // Attacher handles lazy attachment of unknown branches
