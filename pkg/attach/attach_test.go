@@ -14,7 +14,7 @@ func TestAttachment_SuggestsCandidates(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Init git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -67,7 +67,7 @@ func TestAttachment_CanAttachBranch(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Init git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)

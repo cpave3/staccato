@@ -15,7 +15,7 @@ func TestBackupManager_CanCreateBackup(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Init git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -53,7 +53,7 @@ func TestBackupManager_CanRestoreBackup(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Init git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -101,7 +101,7 @@ func TestBackupManager_CanListBackups(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Init git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -137,7 +137,7 @@ func TestBackupManager_CanDeleteBackup(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Init git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
@@ -179,7 +179,7 @@ func TestBackupManager_CleanupOldBackups(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Init git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to init git repo: %v", err)
