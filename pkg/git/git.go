@@ -1,0 +1,179 @@
+package git
+
+import (
+	"fmt"
+	"os/exec"
+	"strings"
+)
+
+// Runner provides an interface for running git commands
+type Runner struct {
+	repoPath string
+}
+
+// NewRunner creates a new git runner for the specified repository
+func NewRunner(repoPath string) *Runner {
+	return &Runner{repoPath: repoPath}
+}
+
+// Run executes a git command and returns the output
+func (r *Runner) Run(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.repoPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s failed: %w\nOutput: %s", strings.Join(args, " "), err, string(output))
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// GetCurrentBranch returns the name of the current branch
+func (r *Runner) GetCurrentBranch() (string, error) {
+	return r.Run("rev-parse", "--abbrev-ref", "HEAD")
+}
+
+// CreateBranch creates a new branch from the current HEAD
+func (r *Runner) CreateBranch(name string) error {
+	_, err := r.Run("branch", name)
+	return err
+}
+
+// CreateAndCheckoutBranch creates a new branch and switches to it
+func (r *Runner) CreateAndCheckoutBranch(name string) error {
+	_, err := r.Run("checkout", "-b", name)
+	return err
+}
+
+// CheckoutBranch switches to an existing branch
+func (r *Runner) CheckoutBranch(name string) error {
+	_, err := r.Run("checkout", name)
+	return err
+}
+
+// GetCommitSHA returns the full SHA of a commit reference
+func (r *Runner) GetCommitSHA(ref string) (string, error) {
+	return r.Run("rev-parse", ref)
+}
+
+// EnableRerere enables git's rerere (reuse recorded resolution) feature
+func (r *Runner) EnableRerere() error {
+	_, err := r.Run("config", "rerere.enabled", "true")
+	return err
+}
+
+// GetMergeBase returns the best common ancestor between two commits
+func (r *Runner) GetMergeBase(a, b string) (string, error) {
+	return r.Run("merge-base", a, b)
+}
+
+// Rebase rebases the current branch onto the specified target
+func (r *Runner) Rebase(target string) error {
+	_, err := r.Run("rebase", target)
+	return err
+}
+
+// RebaseContinue continues a rebase after conflict resolution
+func (r *Runner) RebaseContinue() error {
+	_, err := r.Run("rebase", "--continue")
+	return err
+}
+
+// RebaseAbort aborts the current rebase operation
+func (r *Runner) RebaseAbort() error {
+	_, err := r.Run("rebase", "--abort")
+	return err
+}
+
+// IsRebaseInProgress checks if a rebase is currently in progress
+func (r *Runner) IsRebaseInProgress() (bool, error) {
+	output, err := r.Run("rev-parse", "--git-path", "rebase-merge")
+	if err != nil {
+		return false, err
+	}
+
+	// Check if the rebase directory exists
+	cmd := exec.Command("test", "-d", output)
+	cmd.Dir = r.repoPath
+	err = cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+
+	// Also check for rebase-apply
+	output, err = r.Run("rev-parse", "--git-path", "rebase-apply")
+	if err != nil {
+		return false, err
+	}
+
+	cmd = exec.Command("test", "-d", output)
+	cmd.Dir = r.repoPath
+	err = cmd.Run()
+	return err == nil, nil
+}
+
+// BranchExists checks if a branch exists
+func (r *Runner) BranchExists(name string) (bool, error) {
+	_, err := r.Run("rev-parse", "--verify", name)
+	return err == nil, nil
+}
+
+// Push pushes the current branch to the remote
+func (r *Runner) Push(branch string, force bool) error {
+	args := []string{"push", "origin", branch}
+	if force {
+		args = append(args, "--force-with-lease")
+	}
+	_, err := r.Run(args...)
+	return err
+}
+
+// PushAll pushes all branches in the stack to the remote
+func (r *Runner) PushAll(branches []string, dryRun bool) error {
+	for _, branch := range branches {
+		args := []string{"push", "origin", branch}
+		if dryRun {
+			args = append(args, "--dry-run")
+		}
+		_, err := r.Run(args...)
+		if err != nil {
+			return fmt.Errorf("failed to push branch %s: %w", branch, err)
+		}
+	}
+	return nil
+}
+
+// Fetch fetches updates from the remote
+func (r *Runner) Fetch() error {
+	_, err := r.Run("fetch", "origin")
+	return err
+}
+
+// HasRemote checks if the repository has a remote configured
+func (r *Runner) HasRemote() (bool, error) {
+	output, err := r.Run("remote")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) != "", nil
+}
+
+// GetBranchSHA returns the SHA of a branch
+func (r *Runner) GetBranchSHA(name string) (string, error) {
+	return r.Run("rev-parse", name)
+}
+
+// DeleteBranch deletes a branch
+func (r *Runner) DeleteBranch(name string, force bool) error {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	_, err := r.Run("branch", flag, name)
+	return err
+}
+
+// CopyBranch creates a backup of a branch with a new name
+func (r *Runner) CopyBranch(source, destination string) error {
+	_, err := r.Run("branch", destination, source)
+	return err
+}
