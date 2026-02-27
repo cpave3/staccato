@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/graph"
 	"github.com/cpave3/staccato/pkg/restack"
 )
 
@@ -221,7 +222,16 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				}
 			}
 
-			// 9. Restore original branch if it still exists
+			// 9. Push shared graph ref if in shared mode
+			if !downOnly && gitRunner.RefExists(graph.SharedGraphRef) {
+				if err := gitRunner.PushRef(graph.SharedGraphRef); err != nil {
+					printer.Error("Failed to push graph ref: %v", err)
+				} else {
+					printer.Info("Pushed graph ref")
+				}
+			}
+
+			// 10. Restore original branch if it still exists
 			if originalBranch != "" {
 				exists, _ := gitRunner.BranchExists(originalBranch)
 				if exists {
@@ -229,7 +239,7 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				}
 			}
 
-			// 10. Print summary
+			// 11. Print summary
 			printer.SyncSummary(len(mergedBranches), restackedCount, pushedCount)
 
 			return nil
