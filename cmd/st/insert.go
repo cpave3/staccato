@@ -67,7 +67,7 @@ The current branch and all downstream branches will be reparented and restacked.
 			g.Branches[currentBranch].Parent = branchName
 
 			// Save graph first
-			if err := saveContext(g, repoPath); err != nil {
+			if err := saveContext(g, repoPath, git); err != nil {
 				return fmt.Errorf("failed to save graph: %w", err)
 			}
 

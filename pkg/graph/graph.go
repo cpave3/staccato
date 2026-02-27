@@ -10,6 +10,7 @@ import (
 const (
 	CurrentVersion   = 1
 	DefaultGraphPath = ".git/stack/graph.json"
+	SharedGraphRef   = "refs/staccato/graph"
 )
 
 // Branch represents a branch in the stack with its metadata
@@ -140,9 +141,4 @@ func LoadGraph(path string) (*Graph, error) {
 	}
 
 	return &g, nil
-}
-
-// GetDefaultGraphPath returns the default path for the stack graph
-func GetDefaultGraphPath() string {
-	return DefaultGraphPath
 }

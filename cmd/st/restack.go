@@ -54,7 +54,7 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 			result, err := engine.RestackLineage(g, currentBranch, lineageBranches)
 
 			// Save graph state (even if there was an error)
-			saveContext(g, repoPath)
+			saveContext(g, repoPath, git)
 
 			if err != nil {
 				if result.Conflicts {

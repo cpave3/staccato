@@ -44,7 +44,7 @@ func continueCmd() *cobra.Command {
 			result, err := engine.Continue(g, rootBranch, nil)
 
 			// Save graph state
-			saveContext(g, repoPath)
+			saveContext(g, repoPath, git)
 
 			if err != nil {
 				if result.Conflicts {

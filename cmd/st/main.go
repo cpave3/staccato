@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,6 +95,7 @@ func init() {
 	rootCmd.AddCommand(backupCmd())
 	rootCmd.AddCommand(prCmd())
 	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(graphCmd())
 }
 
 // getContext loads the graph and git runner for commands
@@ -109,23 +111,49 @@ func getContext() (*graph.Graph, *git.Runner, *output.Printer, string, error) {
 
 	gitRunner = git.NewRunner(repoPath)
 
-	// Load or create graph
-	graphPath := filepath.Join(repoPath, graph.GetDefaultGraphPath())
-	g, err := graph.LoadGraph(graphPath)
-	if err != nil {
-		// Graph doesn't exist yet, try to create with current branch as root
-		currentBranch, err := gitRunner.GetCurrentBranch()
+	var g *graph.Graph
+
+	switch {
+	case gitRunner.RefExists(graph.SharedGraphRef):
+		// Shared mode: load from git ref
+		data, err := gitRunner.ReadBlobRef(graph.SharedGraphRef)
 		if err != nil {
-			return nil, nil, nil, "", fmt.Errorf("failed to get current branch: %w", err)
+			return nil, nil, nil, "", fmt.Errorf("failed to read shared graph ref: %w", err)
 		}
-		g = graph.NewGraph(currentBranch)
+		g = &graph.Graph{}
+		if err := json.Unmarshal(data, g); err != nil {
+			return nil, nil, nil, "", fmt.Errorf("failed to unmarshal shared graph: %w", err)
+		}
+		if g.Branches == nil {
+			g.Branches = make(map[string]*graph.Branch)
+		}
+
+	default:
+		// Local mode: load from file
+		graphPath := filepath.Join(repoPath, graph.DefaultGraphPath)
+		g, err = graph.LoadGraph(graphPath)
+		if err != nil {
+			// Graph doesn't exist yet, create with current branch as root
+			currentBranch, branchErr := gitRunner.GetCurrentBranch()
+			if branchErr != nil {
+				return nil, nil, nil, "", fmt.Errorf("failed to get current branch: %w", branchErr)
+			}
+			g = graph.NewGraph(currentBranch)
+		}
 	}
 
 	return g, gitRunner, printer, repoPath, nil
 }
 
 // saveContext saves the graph
-func saveContext(g *graph.Graph, repoPath string) error {
-	graphPath := filepath.Join(repoPath, graph.GetDefaultGraphPath())
+func saveContext(g *graph.Graph, repoPath string, gitRunner *git.Runner) error {
+	if gitRunner.RefExists(graph.SharedGraphRef) {
+		data, err := json.MarshalIndent(g, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal graph: %w", err)
+		}
+		return gitRunner.WriteBlobRef(graph.SharedGraphRef, data)
+	}
+	graphPath := filepath.Join(repoPath, graph.DefaultGraphPath)
 	return g.Save(graphPath)
 }

@@ -180,7 +180,7 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 
 			// 6. Save graph if branches were removed
 			if len(mergedBranches) > 0 {
-				if err := saveContext(g, repoPath); err != nil {
+				if err := saveContext(g, repoPath, gitRunner); err != nil {
 					return fmt.Errorf("failed to save graph: %w", err)
 				}
 			}
@@ -194,13 +194,13 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				if err != nil {
 					if result != nil && result.Conflicts {
 						printer.ConflictDetected(result.ConflictsAt)
-						saveContext(g, repoPath)
+						saveContext(g, repoPath, gitRunner)
 						return fmt.Errorf("conflict during restack - resolve and run 'st continue'")
 					}
 					return fmt.Errorf("restack failed: %w", err)
 				}
 				restackedCount = len(result.Completed)
-				saveContext(g, repoPath)
+				saveContext(g, repoPath, gitRunner)
 			}
 
 			// 8. Push remaining branches in current lineage (force-with-lease since they may have been rebased)

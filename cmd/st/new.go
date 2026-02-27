@@ -34,7 +34,7 @@ func newCmd() *cobra.Command {
 			g.AddBranch(branchName, g.Root, baseSHA, headSHA)
 
 			// Save graph
-			if err := saveContext(g, repoPath); err != nil {
+			if err := saveContext(g, repoPath, git); err != nil {
 				return fmt.Errorf("failed to save graph: %w", err)
 			}
 
