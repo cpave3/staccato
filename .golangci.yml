@@ -1,0 +1,11 @@
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+issues:
+  exclude-dirs:
+    - vendor
