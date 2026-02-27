@@ -15,6 +15,8 @@ func logCmd() *cobra.Command {
 				return err
 			}
 
+			checkStaleness(g, git, printer)
+
 			currentBranch, _ := git.GetCurrentBranch()
 
 			printer.StackLog(g, currentBranch)

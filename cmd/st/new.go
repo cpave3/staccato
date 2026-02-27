@@ -20,6 +20,8 @@ func newCmd() *cobra.Command {
 				return err
 			}
 
+			checkStaleness(g, git, printer)
+
 			// Create branch from root
 			err = git.CreateAndCheckoutBranch(branchName)
 			if err != nil {

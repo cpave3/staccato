@@ -327,10 +327,12 @@ Opens an interactive TUI to select the parent branch (use --auto to skip TUI).
 Use --parent to specify the parent directly. Works for both new and already-tracked branches.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			g, gitRunner, _, repoPath, err := getContext()
+			g, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {
 				return err
 			}
+
+			checkStaleness(g, gitRunner, printer)
 
 			var branchToAttach string
 			if len(args) > 0 {

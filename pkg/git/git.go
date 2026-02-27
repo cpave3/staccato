@@ -308,6 +308,21 @@ func (r *Runner) HasFetchRefspec(pattern string) bool {
 	return false
 }
 
+// HasUncommittedChanges checks if the working tree has any uncommitted changes
+func (r *Runner) HasUncommittedChanges() (bool, error) {
+	output, err := r.Run("status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) != "", nil
+}
+
+// StashPush stashes uncommitted changes with a descriptive message
+func (r *Runner) StashPush(message string) error {
+	_, err := r.Run("stash", "push", "-m", message)
+	return err
+}
+
 // GetAllBranches returns all local branch names
 func (r *Runner) GetAllBranches() ([]string, error) {
 	output, err := r.Run("branch", "--format=%(refname:short)")

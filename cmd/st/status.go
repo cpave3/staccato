@@ -16,6 +16,8 @@ func statusCmd() *cobra.Command {
 				return err
 			}
 
+			checkStaleness(g, gitRunner, printer)
+
 			currentBranch, _ := gitRunner.GetCurrentBranch()
 
 			f, err := forge.Detect(gitRunner)

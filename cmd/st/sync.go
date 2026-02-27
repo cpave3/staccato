@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/cpave3/staccato/pkg/output"
 	"github.com/cpave3/staccato/pkg/restack"
 )
 
@@ -40,6 +43,11 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 			printer.SyncFetching()
 			if err := gitRunner.FetchPrune(); err != nil {
 				return fmt.Errorf("fetch failed: %w", err)
+			}
+
+			// 2b. Reconcile shared graph after fetch
+			if gitRunner.RefExists(graph.SharedGraphRef) {
+				reconcileSharedGraph(g, gitRunner, printer)
 			}
 
 			// 3. Fetch with read-only detection for dry-run
@@ -168,9 +176,13 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				g.ReparentChildren(branch, parent)
 				g.RemoveBranch(branch)
 
-				// If user is on this branch, checkout trunk
+				// If user is on this branch, stash uncommitted changes and checkout trunk
 				cur, _ := gitRunner.GetCurrentBranch()
 				if cur == branch {
+					if hasChanges, _ := gitRunner.HasUncommittedChanges(); hasChanges {
+						printer.Warning("Stashing uncommitted changes from merged branch '%s'", branch)
+						gitRunner.StashPush(fmt.Sprintf("st-sync: changes from merged branch %s", branch))
+					}
 					gitRunner.CheckoutBranch(trunk)
 					originalBranch = trunk
 				}
@@ -250,4 +262,78 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 	cmd.Flags().BoolVar(&downOnly, "down", false, "Only pull changes from remote, skip pushing")
 
 	return cmd
+}
+
+// reconcileSharedGraph merges the fetched remote graph with the local graph.
+// Remote graph is the base; local-only branches are added. For branches in both,
+// local HeadSHA is kept if local is ahead (unpushed commits).
+func reconcileSharedGraph(g *graph.Graph, gitRunner *git.Runner, printer *output.Printer) {
+	remoteData, err := gitRunner.ReadBlobRef(graph.SharedGraphRef)
+	if err != nil {
+		return
+	}
+	var remoteGraph graph.Graph
+	if json.Unmarshal(remoteData, &remoteGraph) != nil {
+		return
+	}
+	if remoteGraph.Branches == nil {
+		remoteGraph.Branches = make(map[string]*graph.Branch)
+	}
+
+	reconciled := reconcileGraphs(g, &remoteGraph, gitRunner)
+
+	// Apply reconciled state back to g
+	g.Root = reconciled.Root
+	g.Branches = reconciled.Branches
+	g.Version = reconciled.Version
+
+	printer.Info("Reconciled shared graph")
+}
+
+// reconcileGraphs performs the union merge: start with remote, add local-only branches,
+// and for shared branches keep local HeadSHA if local is ahead.
+func reconcileGraphs(local *graph.Graph, remote *graph.Graph, gitRunner *git.Runner) *graph.Graph {
+	result := &graph.Graph{
+		Version:  remote.Version,
+		Root:     remote.Root,
+		Branches: make(map[string]*graph.Branch),
+	}
+
+	// Start with remote branches that exist locally
+	for name, branch := range remote.Branches {
+		if exists, _ := gitRunner.BranchExists(name); exists {
+			result.Branches[name] = &graph.Branch{
+				Name:    branch.Name,
+				Parent:  branch.Parent,
+				BaseSHA: branch.BaseSHA,
+				HeadSHA: branch.HeadSHA,
+			}
+		}
+	}
+
+	// Add local-only branches and update shared branches where local is ahead
+	for name, localBranch := range local.Branches {
+		if _, inRemote := remote.Branches[name]; !inRemote {
+			// Local-only branch: only add if the git branch actually exists locally
+			if exists, _ := gitRunner.BranchExists(name); exists {
+				result.Branches[name] = &graph.Branch{
+					Name:    localBranch.Name,
+					Parent:  localBranch.Parent,
+					BaseSHA: localBranch.BaseSHA,
+					HeadSHA: localBranch.HeadSHA,
+				}
+			}
+		} else {
+			// Branch in both: keep local HeadSHA if local is ahead
+			remoteBranch := remote.Branches[name]
+			if localBranch.HeadSHA != remoteBranch.HeadSHA {
+				isAnc, err := gitRunner.IsAncestor(remoteBranch.HeadSHA, localBranch.HeadSHA)
+				if err == nil && isAnc {
+					result.Branches[name].HeadSHA = localBranch.HeadSHA
+				}
+			}
+		}
+	}
+
+	return result
 }

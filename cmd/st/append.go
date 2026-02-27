@@ -20,6 +20,8 @@ func appendCmd() *cobra.Command {
 				return err
 			}
 
+			checkStaleness(g, git, printer)
+
 			parentBranch, _ := git.GetCurrentBranch()
 
 			// If current branch is not in graph and not root, we need to attach it first

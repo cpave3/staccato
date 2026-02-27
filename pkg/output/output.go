@@ -277,6 +277,14 @@ func (p *Printer) Help() {
 	p.Println("  -h, --help         Show this help message")
 }
 
+// StalenessWarning prints a staleness warning with details
+func (p *Printer) StalenessWarning(messages []string) {
+	p.Warning("Local state is behind remote — run 'st sync' to update")
+	for _, msg := range messages {
+		p.Println("  %s %s", ArrowIcon, msg)
+	}
+}
+
 // DryRunNotice prints a dry-run notice
 func (p *Printer) DryRunNotice() {
 	p.Warning("Running in dry-run mode (no changes will be made)")
