@@ -37,7 +37,6 @@ type attachTUI struct {
 	matches        []int
 	matchIndex     int
 	quitting       bool
-	err            error
 }
 
 func (a attachTUI) Init() tea.Cmd {

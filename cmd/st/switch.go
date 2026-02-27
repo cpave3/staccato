@@ -19,7 +19,6 @@ type branchItem struct {
 	parent     string
 	depth      int
 	current    bool
-	matchScore int // For search highlighting
 }
 
 func (i branchItem) FilterValue() string { return i.name }
@@ -37,7 +36,6 @@ type switchTUI struct {
 	matchIndex  int   // Current match position
 	selected    string
 	quitting    bool
-	err         error
 }
 
 var (

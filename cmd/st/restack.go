@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/cpave3/staccato/pkg/attach"
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/restack"
 )
@@ -29,13 +28,6 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 				if _, exists := g.GetBranch(currentBranch); !exists {
 					return fmt.Errorf("current branch '%s' is not in the stack", currentBranch)
 				}
-			}
-
-			// Find root of current stack
-			attacher := attach.NewAttacher(git, printer)
-			rootBranch := attacher.FindRoot(g, currentBranch)
-			if rootBranch == "" {
-				rootBranch = g.Root
 			}
 
 			// Get only the current lineage (not all branches under root)
