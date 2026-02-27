@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/cpave3/staccato/pkg/output"
 	"github.com/cpave3/staccato/pkg/restack"
 )
 
@@ -42,6 +45,11 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				return fmt.Errorf("fetch failed: %w", err)
 			}
 
+			// 2b. Reconcile shared graph after fetch
+			if gitRunner.RefExists(graph.SharedGraphRef) {
+				reconcileSharedGraph(g, gitRunner, printer)
+			}
+
 			// 3. Fetch with read-only detection for dry-run
 			trunk := g.Root
 
@@ -58,28 +66,12 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				}
 
 				// Detect merged branches
-				sorted, err := restack.TopologicalSort(g, trunk)
+				mergedBranches, err := detectMergedBranches(g, gitRunner, trunk)
 				if err != nil {
-					return fmt.Errorf("failed to sort branches: %w", err)
+					return fmt.Errorf("failed to detect merged branches: %w", err)
 				}
-
-				var mergedBranches []string
-				for _, branch := range sorted {
-					merged := false
-					isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
-					if err == nil && isAnc {
-						merged = true
-					}
-					if !merged && !gitRunner.RemoteBranchExists(branch) {
-						diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
-						if err == nil && diffEmpty {
-							merged = true
-						}
-					}
-					if merged {
-						mergedBranches = append(mergedBranches, branch)
-						fmt.Printf("Would remove merged branch: %s\n", branch)
-					}
+				for _, branch := range mergedBranches {
+					fmt.Printf("Would remove merged branch: %s\n", branch)
 				}
 
 				if len(mergedBranches) > 0 {
@@ -124,33 +116,12 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 			}
 
 			// 4. Detect merged branches (topological order)
-			sorted, err := restack.TopologicalSort(g, trunk)
+			mergedBranches, err := detectMergedBranches(g, gitRunner, trunk)
 			if err != nil {
-				return fmt.Errorf("failed to sort branches: %w", err)
+				return fmt.Errorf("failed to detect merged branches: %w", err)
 			}
-
-			var mergedBranches []string
-			for _, branch := range sorted {
-				merged := false
-
-				// Check regular merge: branch is ancestor of origin/trunk
-				isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
-				if err == nil && isAnc {
-					merged = true
-				}
-
-				// Check squash merge: remote branch gone AND diff to trunk is empty
-				if !merged && !gitRunner.RemoteBranchExists(branch) {
-					diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
-					if err == nil && diffEmpty {
-						merged = true
-					}
-				}
-
-				if merged {
-					mergedBranches = append(mergedBranches, branch)
-					printer.SyncMergedDetected(branch)
-				}
+			for _, branch := range mergedBranches {
+				printer.SyncMergedDetected(branch)
 			}
 
 			// 5. Remove merged branches
@@ -168,9 +139,13 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				g.ReparentChildren(branch, parent)
 				g.RemoveBranch(branch)
 
-				// If user is on this branch, checkout trunk
+				// If user is on this branch, stash uncommitted changes and checkout trunk
 				cur, _ := gitRunner.GetCurrentBranch()
 				if cur == branch {
+					if hasChanges, _ := gitRunner.HasUncommittedChanges(); hasChanges {
+						printer.Warning("Stashing uncommitted changes from merged branch '%s'", branch)
+						gitRunner.StashPush(fmt.Sprintf("st-sync: changes from merged branch %s", branch))
+					}
 					gitRunner.CheckoutBranch(trunk)
 					originalBranch = trunk
 				}
@@ -250,4 +225,123 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 	cmd.Flags().BoolVar(&downOnly, "down", false, "Only pull changes from remote, skip pushing")
 
 	return cmd
+}
+
+// detectMergedBranches returns branch names that have been merged into trunk.
+// Skips branches with no unique commits (e.g., newly created branches).
+func detectMergedBranches(g *graph.Graph, gitRunner *git.Runner, trunk string) ([]string, error) {
+	sorted, err := restack.TopologicalSort(g, trunk)
+	if err != nil {
+		return nil, err
+	}
+
+	var merged []string
+	for _, branch := range sorted {
+		b, exists := g.GetBranch(branch)
+		if !exists {
+			continue
+		}
+
+		// Skip branches with no unique commits since their base.
+		// These are newly created branches that have nothing to merge.
+		actualHead, err := gitRunner.GetCommitSHA(branch)
+		if err == nil && actualHead == b.BaseSHA {
+			continue
+		}
+
+		isMerged := false
+
+		// Check regular merge: branch is ancestor of origin/trunk
+		isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
+		if err == nil && isAnc {
+			isMerged = true
+		}
+
+		// Check squash merge: remote branch gone AND diff to trunk is empty
+		if !isMerged && !gitRunner.RemoteBranchExists(branch) {
+			diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
+			if err == nil && diffEmpty {
+				isMerged = true
+			}
+		}
+
+		if isMerged {
+			merged = append(merged, branch)
+		}
+	}
+	return merged, nil
+}
+
+// reconcileSharedGraph merges the fetched remote graph with the local graph.
+// Remote graph is the base; local-only branches are added. For branches in both,
+// local HeadSHA is kept if local is ahead (unpushed commits).
+func reconcileSharedGraph(g *graph.Graph, gitRunner *git.Runner, printer *output.Printer) {
+	remoteData, err := gitRunner.ReadBlobRef(graph.SharedGraphRef)
+	if err != nil {
+		return
+	}
+	var remoteGraph graph.Graph
+	if json.Unmarshal(remoteData, &remoteGraph) != nil {
+		return
+	}
+	if remoteGraph.Branches == nil {
+		remoteGraph.Branches = make(map[string]*graph.Branch)
+	}
+
+	reconciled := reconcileGraphs(g, &remoteGraph, gitRunner)
+
+	// Apply reconciled state back to g
+	g.Root = reconciled.Root
+	g.Branches = reconciled.Branches
+	g.Version = reconciled.Version
+
+	printer.Info("Reconciled shared graph")
+}
+
+// reconcileGraphs performs the union merge: start with remote, add local-only branches,
+// and for shared branches keep local HeadSHA if local is ahead.
+func reconcileGraphs(local *graph.Graph, remote *graph.Graph, gitRunner *git.Runner) *graph.Graph {
+	result := &graph.Graph{
+		Version:  remote.Version,
+		Root:     remote.Root,
+		Branches: make(map[string]*graph.Branch),
+	}
+
+	// Start with remote branches that exist locally
+	for name, branch := range remote.Branches {
+		if exists, _ := gitRunner.BranchExists(name); exists {
+			result.Branches[name] = &graph.Branch{
+				Name:    branch.Name,
+				Parent:  branch.Parent,
+				BaseSHA: branch.BaseSHA,
+				HeadSHA: branch.HeadSHA,
+			}
+		}
+	}
+
+	// Add local-only branches and update shared branches where local is ahead
+	for name, localBranch := range local.Branches {
+		if _, inRemote := remote.Branches[name]; !inRemote {
+			// Local-only branch: only add if the git branch actually exists locally
+			if exists, _ := gitRunner.BranchExists(name); exists {
+				result.Branches[name] = &graph.Branch{
+					Name:    localBranch.Name,
+					Parent:  localBranch.Parent,
+					BaseSHA: localBranch.BaseSHA,
+					HeadSHA: localBranch.HeadSHA,
+				}
+			}
+		} else {
+			// Branch in both: keep local HeadSHA if local is ahead
+			remoteBranch := remote.Branches[name]
+			if localBranch.HeadSHA != remoteBranch.HeadSHA {
+				isAnc, err := gitRunner.IsAncestor(remoteBranch.HeadSHA, localBranch.HeadSHA)
+				if err == nil && isAnc {
+					result.Branches[name].HeadSHA = localBranch.HeadSHA
+				}
+			}
+		}
+	}
+
+	return result
 }

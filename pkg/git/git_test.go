@@ -227,6 +227,70 @@ func TestGitRunner_WriteBlobRef_Overwrite(t *testing.T) {
 	}
 }
 
+func TestGitRunner_HasUncommittedChanges(t *testing.T) {
+	tmpDir, git := initRepoWithCommit(t)
+
+	// Clean state — no uncommitted changes
+	has, err := git.HasUncommittedChanges()
+	if err != nil {
+		t.Fatalf("HasUncommittedChanges: %v", err)
+	}
+	if has {
+		t.Error("expected no uncommitted changes on clean repo")
+	}
+
+	// Create an unstaged file
+	os.WriteFile(filepath.Join(tmpDir, "dirty.txt"), []byte("dirty"), 0644)
+	has, err = git.HasUncommittedChanges()
+	if err != nil {
+		t.Fatalf("HasUncommittedChanges: %v", err)
+	}
+	if !has {
+		t.Error("expected uncommitted changes after creating untracked file")
+	}
+}
+
+func TestGitRunner_HasUncommittedChanges_StagedFile(t *testing.T) {
+	tmpDir, git := initRepoWithCommit(t)
+
+	// Stage a new file (but don't commit)
+	os.WriteFile(filepath.Join(tmpDir, "staged.txt"), []byte("staged"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", "staged.txt").Run()
+
+	has, err := git.HasUncommittedChanges()
+	if err != nil {
+		t.Fatalf("HasUncommittedChanges: %v", err)
+	}
+	if !has {
+		t.Error("expected uncommitted changes with staged file")
+	}
+}
+
+func TestGitRunner_StashPush(t *testing.T) {
+	tmpDir, git := initRepoWithCommit(t)
+
+	// Create a dirty file
+	os.WriteFile(filepath.Join(tmpDir, "dirty.txt"), []byte("dirty"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", "dirty.txt").Run()
+
+	err := git.StashPush("test stash message")
+	if err != nil {
+		t.Fatalf("StashPush: %v", err)
+	}
+
+	// Working tree should be clean now
+	has, _ := git.HasUncommittedChanges()
+	if has {
+		t.Error("expected clean working tree after stash push")
+	}
+
+	// Stash list should have our entry
+	out, _ := git.Run("stash", "list")
+	if !strings.Contains(out, "test stash message") {
+		t.Errorf("stash list should contain our message, got: %s", out)
+	}
+}
+
 func TestGitRunner_GetMergeBase(t *testing.T) {
 	tmpDir := t.TempDir()
 	cmd := exec.Command("git", "init", "-b", "main")

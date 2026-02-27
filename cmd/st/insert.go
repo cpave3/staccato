@@ -23,6 +23,8 @@ The current branch and all downstream branches will be reparented and restacked.
 				return err
 			}
 
+			checkStaleness(g, git, printer)
+
 			currentBranch, _ := git.GetCurrentBranch()
 
 			// Get current branch's parent

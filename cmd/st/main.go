@@ -11,6 +11,7 @@ import (
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
 	"github.com/cpave3/staccato/pkg/output"
+	"github.com/cpave3/staccato/pkg/staleness"
 )
 
 var (
@@ -143,6 +144,22 @@ func getContext() (*graph.Graph, *git.Runner, *output.Printer, string, error) {
 	}
 
 	return g, gitRunner, printer, repoPath, nil
+}
+
+// checkStaleness performs an offline check and prints a warning if local state is behind remote.
+func checkStaleness(g *graph.Graph, gitRunner *git.Runner, printer *output.Printer) {
+	hasRemote, _ := gitRunner.HasRemote()
+	if !hasRemote {
+		return
+	}
+	report := staleness.Check(g, gitRunner)
+	if report.IsStale() {
+		var msgs []string
+		for _, s := range report.Signals {
+			msgs = append(msgs, s.Message)
+		}
+		printer.StalenessWarning(msgs)
+	}
 }
 
 // saveContext saves the graph

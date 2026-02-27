@@ -21,6 +21,8 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 				return err
 			}
 
+			checkStaleness(g, git, printer)
+
 			currentBranch, _ := git.GetCurrentBranch()
 
 			// Check if current branch is in the stack

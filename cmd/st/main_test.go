@@ -151,6 +151,40 @@ func graphContains(t *testing.T, repo *testutil.GitRepo, branch string) bool {
 	return ok
 }
 
+func loadGraphInDir(t *testing.T, dir string) *graph.Graph {
+	t.Helper()
+
+	// Check shared ref first
+	cmd := exec.Command("git", "rev-parse", "--verify", graph.SharedGraphRef)
+	cmd.Dir = dir
+	if err := cmd.Run(); err == nil {
+		// Shared mode: read from ref
+		show := exec.Command("git", "show", graph.SharedGraphRef)
+		show.Dir = dir
+		data, err := show.Output()
+		if err != nil {
+			t.Fatalf("loadGraphInDir: failed to read shared ref: %v", err)
+		}
+		var g graph.Graph
+		if err := json.Unmarshal(data, &g); err != nil {
+			t.Fatalf("loadGraphInDir unmarshal: %v", err)
+		}
+		return &g
+	}
+
+	// Local mode: read from file
+	path := filepath.Join(dir, ".git", "stack", "graph.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("loadGraphInDir: %v", err)
+	}
+	var g graph.Graph
+	if err := json.Unmarshal(data, &g); err != nil {
+		t.Fatalf("loadGraphInDir unmarshal: %v", err)
+	}
+	return &g
+}
+
 func assertContains(t *testing.T, haystack, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {
@@ -1525,4 +1559,201 @@ func TestGraph(t *testing.T) {
 			t.Errorf("f2 parent = %q, want f1", g.Branches["f2"].Parent)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// TestStalenessWarningOnLog
+// ---------------------------------------------------------------------------
+
+func TestStalenessWarningOnLog(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create a branch
+	runSt(t, "new", "f1")
+	repo.CreateFile("f1.txt", "f1")
+	repo.AddAndCommit("f1 commit")
+	repo.RunGit("push", "origin", "f1")
+
+	// Advance origin/main (simulating a PR merge on another machine)
+	originDir := repo.OriginDir()
+	f1SHA, _ := repo.RunGit("rev-parse", "f1")
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, f1SHA)
+
+	// Fetch to get the new remote tracking ref (but don't sync)
+	repo.RunGit("fetch", "origin")
+
+	// Now local main is behind origin/main — log should warn
+	repo.Checkout(root)
+	out := runSt(t, "log")
+	assertContains(t, out, "behind remote")
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncReconcileSharedGraph
+// ---------------------------------------------------------------------------
+
+func TestSyncReconcileSharedGraph(t *testing.T) {
+	// Machine A creates branch X, pushes. Machine B creates branch Y, syncs.
+	// After sync on B, both X and Y should be in the graph.
+
+	// Set up "Machine A" repo
+	repoA, rootA := setupRepoWithStack(t)
+	if err := repoA.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repoA.RunGit("push", "-u", "origin", rootA)
+
+	// Create a branch first so graph.json exists, then switch to shared mode
+	runSt(t, "new", "branchX")
+	repoA.CreateFile("x.txt", "x")
+	repoA.AddAndCommit("x commit")
+
+	// Switch to shared graph mode (needs graph.json to exist)
+	runSt(t, "graph", "share")
+
+	// Push the graph ref to remote first so fetch refspec won't fail
+	repoA.RunGit("push", "origin", "refs/staccato/graph:refs/staccato/graph", "--force")
+
+	// Add fetch refspec for graph ref
+	repoA.RunGit("config", "--add", "remote.origin.fetch", "+refs/staccato/graph:refs/staccato/graph")
+
+	// Sync from A (pushes branchX and graph ref)
+	runSt(t, "sync")
+
+	// "Machine B": clone from the same bare origin
+	originDir := repoA.OriginDir()
+	tmpB := t.TempDir()
+	cloneCmd := exec.Command("git", "clone", originDir, tmpB)
+	if out, err := cloneCmd.CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+
+	// Save Machine A's wd and switch to Machine B
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpB); err != nil {
+		t.Fatalf("chdir to B: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
+	// Configure git user for Machine B
+	runGitInDir(t, tmpB, "config", "user.email", "b@test.com")
+	runGitInDir(t, tmpB, "config", "user.name", "User B")
+
+	// Set up shared graph fetch refspec on B and fetch the graph ref
+	runGitInDir(t, tmpB, "config", "--add", "remote.origin.fetch", "+refs/staccato/graph:refs/staccato/graph")
+	runGitInDir(t, tmpB, "fetch", "origin")
+
+	// Create local tracking branch for branchX on Machine B
+	runGitInDir(t, tmpB, "checkout", "-b", "branchX", "origin/branchX")
+	runGitInDir(t, tmpB, "checkout", rootA)
+
+	// Machine B creates branch Y (locally) — st new adds it to the shared graph
+	runSt(t, "new", "branchY")
+	os.WriteFile(filepath.Join(tmpB, "y.txt"), []byte("y"), 0644)
+	runGitInDir(t, tmpB, "add", ".")
+	runGitInDir(t, tmpB, "commit", "-m", "y commit")
+
+	// At this point, Machine B's local graph has branchY but lost branchX
+	// (because st new rewrote the shared ref with only branchY).
+	// Meanwhile, the remote still has branchX from Machine A's sync.
+	// Sync from B should reconcile: fetch brings back the remote graph with
+	// branchX, and reconciliation merges local branchY into it.
+	runSt(t, "sync")
+
+	// Load the graph on Machine B and check both branches exist
+	g := loadGraphInDir(t, tmpB)
+	if _, ok := g.Branches["branchX"]; !ok {
+		t.Error("branchX should be in graph after reconciliation on Machine B")
+	}
+	if _, ok := g.Branches["branchY"]; !ok {
+		t.Error("branchY should be in graph after reconciliation on Machine B")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncStashesUncommittedOnMergedBranch
+// ---------------------------------------------------------------------------
+
+func TestSyncStashesUncommittedOnMergedBranch(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create branch m1 with a commit
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1")
+	repo.AddAndCommit("m1 commit")
+	repo.RunGit("push", "origin", "m1")
+
+	// Simulate m1 merged on remote
+	originDir := repo.OriginDir()
+	m1SHA, _ := repo.RunGit("rev-parse", "m1")
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m1SHA)
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// User is on m1 with uncommitted work
+	repo.Checkout("m1")
+	repo.WriteFile("wip.txt", "work in progress")
+	repo.RunGit("add", "wip.txt")
+
+	// Run sync — should stash the uncommitted changes
+	out := runSt(t, "-v", "sync")
+	assertContains(t, out, "Stashing")
+
+	// Should end up on trunk
+	cur := getCurrentBranch(t, repo)
+	if cur != root {
+		t.Errorf("current branch = %q, want %q", cur, root)
+	}
+
+	// m1 should be gone
+	if repo.BranchExists("m1") {
+		t.Error("m1 should have been deleted")
+	}
+
+	// Stash should contain our work
+	stashOut, _ := repo.RunGit("stash", "list")
+	if !strings.Contains(stashOut, "st-sync") {
+		t.Errorf("stash should contain st-sync entry, got: %s", stashOut)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncSkipsNewEmptyBranch
+// ---------------------------------------------------------------------------
+
+func TestSyncSkipsNewEmptyBranch(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create a new empty branch (no commits)
+	runSt(t, "new", "empty-branch")
+
+	// Run sync — the empty branch should NOT be removed
+	runSt(t, "sync")
+
+	// Branch should still exist in git
+	if !repo.BranchExists("empty-branch") {
+		t.Error("empty-branch should still exist in git after sync")
+	}
+
+	// Branch should still exist in graph
+	if !graphContains(t, repo, "empty-branch") {
+		t.Error("empty-branch should still be in graph after sync")
+	}
+
+	// Branch should have been pushed to remote
+	remoteOut, _ := repo.RunGit("ls-remote", "--heads", "origin", "empty-branch")
+	if strings.TrimSpace(remoteOut) == "" {
+		t.Error("empty-branch should have been pushed to remote")
+	}
 }
