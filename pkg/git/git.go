@@ -235,6 +235,79 @@ func (r *Runner) CopyBranch(source, destination string) error {
 	return err
 }
 
+// RefExists checks if an arbitrary ref exists
+func (r *Runner) RefExists(ref string) bool {
+	_, err := r.Run("rev-parse", "--verify", ref)
+	return err == nil
+}
+
+// ReadBlobRef reads the raw content stored at a ref (e.g. a blob ref)
+func (r *Runner) ReadBlobRef(ref string) ([]byte, error) {
+	output, err := r.Run("show", ref)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(output), nil
+}
+
+// WriteBlobRef writes data as a blob and points ref at it
+func (r *Runner) WriteBlobRef(ref string, data []byte) error {
+	cmd := exec.Command("git", "hash-object", "-w", "--stdin")
+	cmd.Dir = r.repoPath
+	cmd.Stdin = strings.NewReader(string(data))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git hash-object failed: %w\nOutput: %s", err, out)
+	}
+	sha := strings.TrimSpace(string(out))
+	_, err = r.Run("update-ref", ref, sha)
+	return err
+}
+
+// DeleteRef removes a ref
+func (r *Runner) DeleteRef(ref string) error {
+	_, err := r.Run("update-ref", "-d", ref)
+	return err
+}
+
+// PushRef pushes a single ref to origin (force, since it's mutable state)
+func (r *Runner) PushRef(ref string) error {
+	_, err := r.Run("push", "origin", ref+":"+ref, "--force")
+	return err
+}
+
+// FetchRef fetches a single ref from origin. Returns error on failure.
+func (r *Runner) FetchRef(ref string) error {
+	_, err := r.Run("fetch", "origin", ref+":"+ref)
+	return err
+}
+
+// AddFetchRefspec adds a fetch refspec to remote.origin.fetch
+func (r *Runner) AddFetchRefspec(refspec string) error {
+	_, err := r.Run("config", "--add", "remote.origin.fetch", refspec)
+	return err
+}
+
+// RemoveFetchRefspec removes a fetch refspec from remote.origin.fetch
+func (r *Runner) RemoveFetchRefspec(refspec string) error {
+	_, err := r.Run("config", "--unset", "remote.origin.fetch", refspec)
+	return err
+}
+
+// HasFetchRefspec checks if a fetch refspec pattern is configured
+func (r *Runner) HasFetchRefspec(pattern string) bool {
+	output, err := r.Run("config", "--get-all", "remote.origin.fetch")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetAllBranches returns all local branch names
 func (r *Runner) GetAllBranches() ([]string, error) {
 	output, err := r.Run("branch", "--format=%(refname:short)")

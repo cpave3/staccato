@@ -37,7 +37,6 @@ type attachTUI struct {
 	matches        []int
 	matchIndex     int
 	quitting       bool
-	err            error
 }
 
 func (a attachTUI) Init() tea.Cmd {
@@ -274,7 +273,7 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 		// Set as root if: user pressed 'r' or branch is a trunk name
 		if m.setAsRoot || isTrunkBranch(m.selected) {
 			g.Root = m.selected
-			if err := saveContext(g, repoPath); err != nil {
+			if err := saveContext(g, repoPath, gitRunner); err != nil {
 				return fmt.Errorf("failed to save graph: %w", err)
 			}
 			fmt.Printf("✔ Set '%s' as stack root\n", m.selected)
@@ -284,7 +283,7 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 			if err != nil {
 				return fmt.Errorf("failed to attach branch: %w", err)
 			}
-			if err := saveContext(g, repoPath); err != nil {
+			if err := saveContext(g, repoPath, gitRunner); err != nil {
 				return fmt.Errorf("failed to save graph: %w", err)
 			}
 			fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, m.selected)
@@ -305,7 +304,7 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 			return fmt.Errorf("failed to attach branch: %w", err)
 		}
 
-		if err := saveContext(g, repoPath); err != nil {
+		if err := saveContext(g, repoPath, gitRunner); err != nil {
 			return fmt.Errorf("failed to save graph: %w", err)
 		}
 
@@ -353,7 +352,7 @@ Use --parent to specify the parent directly. Works for both new and already-trac
 				if err != nil {
 					return fmt.Errorf("failed to auto-attach: %w", err)
 				}
-				if err := saveContext(g, repoPath); err != nil {
+				if err := saveContext(g, repoPath, gitRunner); err != nil {
 					return fmt.Errorf("failed to save graph: %w", err)
 				}
 				return nil
@@ -427,7 +426,7 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 		newHeadSHA, _ := gitRunner.GetCommitSHA(branchToAttach)
 		g.UpdateBranch(branchToAttach, newBaseSHA, newHeadSHA)
 
-		if err := saveContext(g, repoPath); err != nil {
+		if err := saveContext(g, repoPath, gitRunner); err != nil {
 			return fmt.Errorf("failed to save graph: %w", err)
 		}
 
@@ -455,7 +454,7 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 		return fmt.Errorf("failed to attach branch: %w", err)
 	}
 
-	if err := saveContext(g, repoPath); err != nil {
+	if err := saveContext(g, repoPath, gitRunner); err != nil {
 		return fmt.Errorf("failed to save graph: %w", err)
 	}
 

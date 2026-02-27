@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/cpave3/staccato/pkg/attach"
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/restack"
 )
@@ -31,13 +30,6 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 				}
 			}
 
-			// Find root of current stack
-			attacher := attach.NewAttacher(git, printer)
-			rootBranch := attacher.FindRoot(g, currentBranch)
-			if rootBranch == "" {
-				rootBranch = g.Root
-			}
-
 			// Get only the current lineage (not all branches under root)
 			lineageBranches := restack.GetLineage(g, currentBranch)
 
@@ -62,7 +54,7 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 			result, err := engine.RestackLineage(g, currentBranch, lineageBranches)
 
 			// Save graph state (even if there was an error)
-			saveContext(g, repoPath)
+			saveContext(g, repoPath, git)
 
 			if err != nil {
 				if result.Conflicts {

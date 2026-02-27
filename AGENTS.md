@@ -10,8 +10,13 @@
 ```
 st/
 ├── cmd/st/
-│   ├── main.go           # All commands + attachTUI model
+│   ├── main.go           # Entry point, getContext/saveContext, init
+│   ├── graph.go           # graph share/local/which subcommands
+│   ├── sync.go            # sync command (fetch, merge detect, restack, push)
+│   ├── attach.go          # attach command + attachTUI model
 │   ├── switch.go          # switchTUI model + switch command
+│   ├── new.go, append.go, insert.go, restack.go, continue.go
+│   ├── backup.go, restore.go, log.go, status.go, pr.go
 │   └── main_test.go       # Comprehensive E2E + TUI model tests
 ├── internal/testutil/
 │   └── git.go             # Test helpers (GitRepo, isolated repos)
@@ -21,7 +26,10 @@ st/
 │   ├── backup/            # Backup/restore system (auto + manual)
 │   ├── restack/           # Topological sort & restack engine
 │   ├── attach/            # Lazy attachment logic
+│   ├── forge/             # Forge detection (GitHub, etc.)
 │   └── output/            # CLI formatting utilities
+├── .golangci.yml          # Linter config (govet, staticcheck, unused, ineffassign)
+├── Taskfile.yml           # Task runner (task build/test/lint/check)
 ├── go.mod
 └── st                     # Compiled binary
 ```
@@ -31,7 +39,10 @@ st/
 #### pkg/graph
 - `Graph` struct: Root branch + `map[string]*Branch` of tracked branches
 - `Branch` struct: `Name`, `Parent`, `BaseSHA`, `HeadSHA`
-- JSON persistence to `.git/stack/graph.json`
+- Two storage modes (branching logic lives in `cmd/st/main.go`):
+  - **Local**: JSON file at `.git/stack/graph.json` (default)
+  - **Shared**: Blob stored at `refs/staccato/graph` git ref (opt-in via `st graph share`)
+- Constants: `DefaultGraphPath`, `SharedGraphRef`
 - `GetChildren(parent)` returns `[]*Branch`
 - `ValidateNoCycle()` prevents circular dependencies
 
@@ -39,6 +50,8 @@ st/
 - `Runner` struct: Wraps git subprocess calls via `exec.Command`
 - All output is trimmed via `strings.TrimSpace`
 - Key methods: `CreateAndCheckoutBranch`, `Rebase`, `RebaseContinue`, `IsRebaseInProgress`, `GetMergeBase`, `CopyBranch`, `HasRemote`, `Push`
+- Ref helpers: `RefExists`, `ReadBlobRef`, `WriteBlobRef`, `DeleteRef`, `PushRef`, `FetchRef` — used for shared graph storage
+- Refspec helpers: `AddFetchRefspec`, `RemoveFetchRefspec`, `HasFetchRefspec` — configure auto-fetch of `refs/staccato/*`
 - `GetAllBranches()` uses `--format=%(refname:short)`
 
 #### pkg/backup
@@ -99,13 +112,19 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 | `log` | Display stack tree | — |
 | `switch` | Interactive branch selector (TUI) | — |
 
+| `graph share` | Move graph to shared git ref | — |
+| `graph local` | Move graph back to local file | — |
+| `graph which` | Show current storage mode | — |
+
 ### Command data flow
 ```
 getContext() → (Graph, git.Runner, output.Printer, repoPath, error)
-  └─ loads/creates graph, finds repo root
+  └─ checks SharedGraphRef first, then local file, then creates new
 ... perform operations ...
-saveContext(g, repoPath) → saves graph JSON
+saveContext(g, repoPath, gitRunner) → writes to ref (shared) or file (local)
 ```
+
+**Important**: `saveContext` takes a `gitRunner` parameter — all call sites must pass it. When adding new commands that save, follow this signature.
 
 ## Testing
 
@@ -147,17 +166,24 @@ go test ./pkg/restack/... -v
 - `append` on an untracked branch auto-creates a graph with that branch as root (so it "succeeds"). To test the error case, create a graph with a different root first.
 - `sync --dry-run` uses `printer.Info()` which requires verbose mode — pass `-v` flag to binary.
 - `insert` cleans up automatic backups on success. To test `restore`, create backup branches manually matching the `backup/<branch>/<timestamp>` format.
+- **Never hardcode branch names like `"main"`** — use the `root` variable from `setupRepoWithStack`. The default branch depends on the user's git config (`main` vs `master`).
+- **Never test TUI launch via `runStExpectError`** expecting a TTY failure — it blocks for ~40s waiting for input. Use model-level tests instead (construct the TUI model directly, send `tea.KeyMsg`).
+- `loadGraph` helper checks shared ref first, then falls back to local file — mirrors `getContext` behavior.
+- **Avoid network calls in tests**: `FetchRef` and `PushRef` hit the network. Test repos using `AddRemote()` get local bare repos, not real remotes. Never trigger speculative fetches in `getContext` — that causes credential prompts against the user's real GitHub remote.
 
 ## Build & Run
 
 ```bash
-# Build
-go build -o st ./cmd/st/
+# Using task runner (preferred)
+task build          # Build binary
+task test           # Run all tests
+task lint           # Run golangci-lint
+task check          # Build + test + lint
 
-# Run
-./st --help
-./st new feature-branch
-./st log
+# Or directly
+go build -o st ./cmd/st/
+go test ./... -count=1
+golangci-lint run ./...
 ```
 
 ## Dependencies
@@ -175,7 +201,7 @@ All feature development and bug fixes MUST follow TDD (Test-Driven Development):
 2. **GREEN** — Write the minimal implementation to make tests pass.
 3. **REFACTOR** — Clean up duplication while keeping tests green.
 
-Run `go test ./cmd/st/ -v -count=1` for E2E tests and `go test ./... -v -count=1` for all tests.
+Run `task check` to build, test, and lint in one step.
 
 ## Code Style
 
@@ -184,3 +210,4 @@ Run `go test ./cmd/st/ -v -count=1` for E2E tests and `go test ./... -v -count=1
 - `fmt.Errorf("context: %w", err)` for wrapped errors
 - Constructors: `NewFoo(...)` pattern
 - Public API only for cross-package use
+- Linting: `golangci-lint` with `govet`, `staticcheck`, `unused`, `ineffassign` enabled. Run `task lint` or `golangci-lint run ./...` — zero findings expected on main.
