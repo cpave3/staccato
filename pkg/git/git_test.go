@@ -140,6 +140,93 @@ func TestGitRunner_EnableRerere(t *testing.T) {
 	}
 }
 
+func initRepoWithCommit(t *testing.T) (string, *Runner) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = tmpDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test User").Run()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("test"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").Run()
+	return tmpDir, NewRunner(tmpDir)
+}
+
+func TestGitRunner_RefExists(t *testing.T) {
+	_, git := initRepoWithCommit(t)
+
+	if git.RefExists("refs/staccato/graph") {
+		t.Error("ref should not exist initially")
+	}
+	if !git.RefExists("refs/heads/main") {
+		t.Error("refs/heads/main should exist")
+	}
+}
+
+func TestGitRunner_WriteBlobRef_ReadBlobRef(t *testing.T) {
+	_, git := initRepoWithCommit(t)
+
+	ref := "refs/staccato/graph"
+	data := []byte(`{"version":1,"root":"main","branches":{}}`)
+
+	if err := git.WriteBlobRef(ref, data); err != nil {
+		t.Fatalf("WriteBlobRef failed: %v", err)
+	}
+
+	if !git.RefExists(ref) {
+		t.Fatal("ref should exist after WriteBlobRef")
+	}
+
+	got, err := git.ReadBlobRef(ref)
+	if err != nil {
+		t.Fatalf("ReadBlobRef failed: %v", err)
+	}
+
+	if string(got) != string(data) {
+		t.Errorf("ReadBlobRef = %q, want %q", got, data)
+	}
+}
+
+func TestGitRunner_DeleteRef(t *testing.T) {
+	_, git := initRepoWithCommit(t)
+
+	ref := "refs/staccato/graph"
+	git.WriteBlobRef(ref, []byte("test data"))
+
+	if !git.RefExists(ref) {
+		t.Fatal("ref should exist before delete")
+	}
+
+	if err := git.DeleteRef(ref); err != nil {
+		t.Fatalf("DeleteRef failed: %v", err)
+	}
+
+	if git.RefExists(ref) {
+		t.Error("ref should not exist after delete")
+	}
+}
+
+func TestGitRunner_WriteBlobRef_Overwrite(t *testing.T) {
+	_, git := initRepoWithCommit(t)
+
+	ref := "refs/staccato/graph"
+	git.WriteBlobRef(ref, []byte("first"))
+
+	if err := git.WriteBlobRef(ref, []byte("second")); err != nil {
+		t.Fatalf("second WriteBlobRef failed: %v", err)
+	}
+
+	got, _ := git.ReadBlobRef(ref)
+	if string(got) != "second" {
+		t.Errorf("ReadBlobRef = %q, want %q", got, "second")
+	}
+}
+
 func TestGitRunner_GetMergeBase(t *testing.T) {
 	tmpDir := t.TempDir()
 	cmd := exec.Command("git", "init", "-b", "main")
