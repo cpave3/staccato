@@ -65,6 +65,9 @@ st sync --down
 | `st pr make` | Create a PR for the current branch | |
 | `st pr view` | View the PR for the current branch | |
 | `st status` | Show PR status for the entire stack | |
+| `st graph share` | Share the graph via a pushable/fetchable git ref | |
+| `st graph local` | Move the graph back to local-only storage | |
+| `st graph which` | Show current graph storage mode | |
 
 ### `st attach`
 
@@ -112,7 +115,7 @@ TUI commands require an interactive terminal (TTY). Use `st attach --auto` or `s
 
 - Think in branches, not commits
 - Each branch stores parent, base SHA, and head SHA
-- Metadata persisted in `.git/stack/graph.json`
+- Metadata persisted locally or shared via git ref
 
 ### Deterministic Restacking
 
@@ -136,7 +139,25 @@ TUI commands require an interactive terminal (TTY). Use `st attach --auto` or `s
 
 ## Configuration
 
-Stack metadata is stored in `.git/stack/graph.json`:
+By default, stack metadata is stored locally in `.git/stack/graph.json` (invisible to git, local-only).
+
+### Shared Mode
+
+For teams, the graph can be shared via a git ref (`refs/staccato/graph`):
+
+```bash
+st graph share    # Move local graph to a shared git ref
+st graph which    # Check current mode: "Shared" or "Local"
+st graph local    # Move back to local-only storage
+```
+
+In shared mode:
+- The graph is stored as a blob at `refs/staccato/graph` — invisible to checkout but pushable/fetchable
+- `st sync` automatically pushes the graph ref alongside branches
+- A fetch refspec is configured so `git fetch` pulls the graph ref too
+- Teammates cloning the repo get the shared graph on their first `st sync`
+
+### Graph Format
 
 ```json
 {
@@ -155,19 +176,32 @@ Stack metadata is stored in `.git/stack/graph.json`:
 
 ## Development
 
+This project uses [Task](https://taskfile.dev) as a task runner. Install it and the other dev tools once:
+
 ```bash
-# Run all tests
-go test ./... -v -count=1
-
-# Run E2E tests only
-go test ./cmd/st/ -v -count=1
-
-# Run specific test
-go test ./cmd/st/ -v -count=1 -run TestAttach
-
-# Build
-go build -o st ./cmd/st/
+go install github.com/go-task/task/v3/cmd/task@latest
+task install:tools
 ```
+
+Common commands:
+
+```bash
+task build          # Build the st binary
+task test           # Run all tests
+task test:verbose   # Run all tests with verbose output
+task test:e2e       # Run E2E tests only
+task lint           # Run golangci-lint
+task check          # Build + test + lint
+task install        # Install st to $GOPATH/bin
+```
+
+Or run Go commands directly:
+
+```bash
+go test ./cmd/st/ -v -count=1 -run TestAttach   # Run a specific test
+```
+
+The linter config (`.golangci.yml`) enables `govet`, `staticcheck`, `unused`, and `ineffassign`. The `unused` linter catches dead code (unused functions, fields, variables).
 
 All feature development follows TDD (red-green-refactor). Write failing tests first.
 
