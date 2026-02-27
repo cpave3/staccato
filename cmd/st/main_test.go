@@ -1723,3 +1723,37 @@ func TestSyncStashesUncommittedOnMergedBranch(t *testing.T) {
 		t.Errorf("stash should contain st-sync entry, got: %s", stashOut)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestSyncSkipsNewEmptyBranch
+// ---------------------------------------------------------------------------
+
+func TestSyncSkipsNewEmptyBranch(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create a new empty branch (no commits)
+	runSt(t, "new", "empty-branch")
+
+	// Run sync — the empty branch should NOT be removed
+	runSt(t, "sync")
+
+	// Branch should still exist in git
+	if !repo.BranchExists("empty-branch") {
+		t.Error("empty-branch should still exist in git after sync")
+	}
+
+	// Branch should still exist in graph
+	if !graphContains(t, repo, "empty-branch") {
+		t.Error("empty-branch should still be in graph after sync")
+	}
+
+	// Branch should have been pushed to remote
+	remoteOut, _ := repo.RunGit("ls-remote", "--heads", "origin", "empty-branch")
+	if strings.TrimSpace(remoteOut) == "" {
+		t.Error("empty-branch should have been pushed to remote")
+	}
+}

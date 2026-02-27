@@ -66,28 +66,12 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				}
 
 				// Detect merged branches
-				sorted, err := restack.TopologicalSort(g, trunk)
+				mergedBranches, err := detectMergedBranches(g, gitRunner, trunk)
 				if err != nil {
-					return fmt.Errorf("failed to sort branches: %w", err)
+					return fmt.Errorf("failed to detect merged branches: %w", err)
 				}
-
-				var mergedBranches []string
-				for _, branch := range sorted {
-					merged := false
-					isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
-					if err == nil && isAnc {
-						merged = true
-					}
-					if !merged && !gitRunner.RemoteBranchExists(branch) {
-						diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
-						if err == nil && diffEmpty {
-							merged = true
-						}
-					}
-					if merged {
-						mergedBranches = append(mergedBranches, branch)
-						fmt.Printf("Would remove merged branch: %s\n", branch)
-					}
+				for _, branch := range mergedBranches {
+					fmt.Printf("Would remove merged branch: %s\n", branch)
 				}
 
 				if len(mergedBranches) > 0 {
@@ -132,33 +116,12 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 			}
 
 			// 4. Detect merged branches (topological order)
-			sorted, err := restack.TopologicalSort(g, trunk)
+			mergedBranches, err := detectMergedBranches(g, gitRunner, trunk)
 			if err != nil {
-				return fmt.Errorf("failed to sort branches: %w", err)
+				return fmt.Errorf("failed to detect merged branches: %w", err)
 			}
-
-			var mergedBranches []string
-			for _, branch := range sorted {
-				merged := false
-
-				// Check regular merge: branch is ancestor of origin/trunk
-				isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
-				if err == nil && isAnc {
-					merged = true
-				}
-
-				// Check squash merge: remote branch gone AND diff to trunk is empty
-				if !merged && !gitRunner.RemoteBranchExists(branch) {
-					diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
-					if err == nil && diffEmpty {
-						merged = true
-					}
-				}
-
-				if merged {
-					mergedBranches = append(mergedBranches, branch)
-					printer.SyncMergedDetected(branch)
-				}
+			for _, branch := range mergedBranches {
+				printer.SyncMergedDetected(branch)
 			}
 
 			// 5. Remove merged branches
@@ -262,6 +225,51 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 	cmd.Flags().BoolVar(&downOnly, "down", false, "Only pull changes from remote, skip pushing")
 
 	return cmd
+}
+
+// detectMergedBranches returns branch names that have been merged into trunk.
+// Skips branches with no unique commits (e.g., newly created branches).
+func detectMergedBranches(g *graph.Graph, gitRunner *git.Runner, trunk string) ([]string, error) {
+	sorted, err := restack.TopologicalSort(g, trunk)
+	if err != nil {
+		return nil, err
+	}
+
+	var merged []string
+	for _, branch := range sorted {
+		b, exists := g.GetBranch(branch)
+		if !exists {
+			continue
+		}
+
+		// Skip branches with no unique commits since their base.
+		// These are newly created branches that have nothing to merge.
+		actualHead, err := gitRunner.GetCommitSHA(branch)
+		if err == nil && actualHead == b.BaseSHA {
+			continue
+		}
+
+		isMerged := false
+
+		// Check regular merge: branch is ancestor of origin/trunk
+		isAnc, err := gitRunner.IsAncestor(branch, "origin/"+trunk)
+		if err == nil && isAnc {
+			isMerged = true
+		}
+
+		// Check squash merge: remote branch gone AND diff to trunk is empty
+		if !isMerged && !gitRunner.RemoteBranchExists(branch) {
+			diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
+			if err == nil && diffEmpty {
+				isMerged = true
+			}
+		}
+
+		if isMerged {
+			merged = append(merged, branch)
+		}
+	}
+	return merged, nil
 }
 
 // reconcileSharedGraph merges the fetched remote graph with the local graph.

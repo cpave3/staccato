@@ -195,7 +195,7 @@ golangci-lint run ./...
 
 ## Development Process
 
-All feature development and bug fixes MUST follow TDD (Test-Driven Development):
+IMPORTANT: All feature development and bug fixes MUST follow TDD (Test-Driven Development), using the tdd skill:
 
 1. **RED** — Write failing tests first. Tests should describe the expected behavior.
 2. **GREEN** — Write the minimal implementation to make tests pass.
