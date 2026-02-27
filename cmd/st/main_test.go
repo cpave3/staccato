@@ -1237,8 +1237,8 @@ func TestBackup(t *testing.T) {
 
 		runSt(t, "backup")
 
-		// Check for backups/* branches
-		cmd := exec.Command("git", "branch", "--list", "backups/*")
+		// Check for backup/manual/* branches (new naming scheme)
+		cmd := exec.Command("git", "branch", "--list", "backup/manual/*")
 		cmd.Dir = repo.Dir
 		out, err := cmd.Output()
 		if err != nil {
