@@ -12,8 +12,27 @@ import (
 )
 
 const (
-	BackupPrefix = "backup"
+	BackupPrefix      = "backup"
+	AutoSubpath       = "auto"
+	ManualSubpath     = "manual"
+	LegacyManualPrefix = "backups"
 )
+
+// BackupKind distinguishes automatic from manual backups.
+type BackupKind string
+
+const (
+	BackupAuto   BackupKind = "auto"
+	BackupManual BackupKind = "manual"
+)
+
+// BackupInfo describes a single backup branch.
+type BackupInfo struct {
+	BranchRef    string     // Full git branch ref
+	SourceBranch string     // Original branch name
+	Kind         BackupKind
+	Timestamp    time.Time
+}
 
 // Manager handles creation, restoration, and cleanup of branch backups
 type Manager struct {
@@ -29,13 +48,12 @@ func NewManager(git *git.Runner, repoPath string) *Manager {
 	}
 }
 
-// CreateBackup creates a backup of the specified branch
-// Returns the backup branch name
+// CreateBackup creates an automatic backup of the specified branch.
+// Returns the backup branch name.
 func (m *Manager) CreateBackup(branchName string) (string, error) {
 	timestamp := time.Now().UnixNano()
-	backupName := fmt.Sprintf("%s/%s/%d", BackupPrefix, branchName, timestamp)
+	backupName := fmt.Sprintf("%s/%s/%s/%d", BackupPrefix, AutoSubpath, branchName, timestamp)
 
-	// Create backup branch
 	err := m.git.CopyBranch(branchName, backupName)
 	if err != nil {
 		return "", fmt.Errorf("failed to create backup branch: %w", err)
@@ -96,11 +114,12 @@ func (m *Manager) RestoreBackup(branchName, backupName string) error {
 	return nil
 }
 
-// ListBackups returns all backups for a given branch
+// ListBackups returns all auto backups for a given branch (newest first).
+// It matches both the new backup/auto/<branch>/ and legacy backup/<branch>/ patterns.
 func (m *Manager) ListBackups(branchName string) ([]string, error) {
-	pattern := fmt.Sprintf("%s/%s/", BackupPrefix, branchName)
+	newPattern := fmt.Sprintf("%s/%s/%s/", BackupPrefix, AutoSubpath, branchName)
+	legacyPattern := fmt.Sprintf("%s/%s/", BackupPrefix, branchName)
 
-	// Get all branches
 	output, err := m.git.Run("branch", "-a")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list branches: %w", err)
@@ -109,11 +128,16 @@ func (m *Manager) ListBackups(branchName string) ([]string, error) {
 	var backups []string
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		// Remove leading * if present (current branch marker)
 		line = strings.TrimPrefix(line, "* ")
 
-		if strings.HasPrefix(line, pattern) {
+		if strings.HasPrefix(line, newPattern) {
 			backups = append(backups, line)
+		} else if strings.HasPrefix(line, legacyPattern) {
+			// Exclude new-format auto/manual subpaths from legacy match
+			rest := strings.TrimPrefix(line, BackupPrefix+"/")
+			if !strings.HasPrefix(rest, AutoSubpath+"/") && !strings.HasPrefix(rest, ManualSubpath+"/") {
+				backups = append(backups, line)
+			}
 		}
 	}
 
@@ -226,14 +250,13 @@ func (m *Manager) extractTimestamp(backupName string) int64 {
 }
 
 // CreateManualBackup creates a manual snapshot of the given branches.
-// Unlike automatic backups, manual backups use the "backups/" prefix (plural)
-// and are not auto-deleted on success.
+// Manual backups use backup/manual/<timestamp>/<branch> naming.
 // Returns the timestamp label used in the backup branch names.
 func (m *Manager) CreateManualBackup(branches []string) (string, error) {
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 
 	for _, branch := range branches {
-		backupName := fmt.Sprintf("backups/%s/%s", timestamp, branch)
+		backupName := fmt.Sprintf("%s/%s/%s/%s", BackupPrefix, ManualSubpath, timestamp, branch)
 		err := m.git.CopyBranch(branch, backupName)
 		if err != nil {
 			return timestamp, fmt.Errorf("failed to backup branch %s: %w", branch, err)
@@ -241,6 +264,144 @@ func (m *Manager) CreateManualBackup(branches []string) (string, error) {
 	}
 
 	return timestamp, nil
+}
+
+// parseBackupBranch parses a branch name into a BackupInfo.
+// It recognizes all 4 formats:
+//   - New auto:     backup/auto/<branch>/<nano-ts>
+//   - New manual:   backup/manual/<YYYY-MM-DD_HH-MM-SS>/<branch>
+//   - Legacy auto:  backup/<branch>/<nano-ts>
+//   - Legacy manual: backups/<YYYY-MM-DD_HH-MM-SS>/<branch>
+func parseBackupBranch(name string) (BackupInfo, bool) {
+	// New auto: backup/auto/<branch...>/<nano-ts>
+	if strings.HasPrefix(name, BackupPrefix+"/"+AutoSubpath+"/") {
+		rest := strings.TrimPrefix(name, BackupPrefix+"/"+AutoSubpath+"/")
+		// Timestamp is always the last segment
+		lastSlash := strings.LastIndex(rest, "/")
+		if lastSlash < 0 {
+			return BackupInfo{}, false
+		}
+		branch := rest[:lastSlash]
+		tsStr := rest[lastSlash+1:]
+		nanos, err := strconv.ParseInt(tsStr, 10, 64)
+		if err != nil || branch == "" {
+			return BackupInfo{}, false
+		}
+		return BackupInfo{
+			BranchRef:    name,
+			SourceBranch: branch,
+			Kind:         BackupAuto,
+			Timestamp:    time.Unix(0, nanos),
+		}, true
+	}
+
+	// New manual: backup/manual/<YYYY-MM-DD_HH-MM-SS>/<branch>
+	if strings.HasPrefix(name, BackupPrefix+"/"+ManualSubpath+"/") {
+		rest := strings.TrimPrefix(name, BackupPrefix+"/"+ManualSubpath+"/")
+		// Timestamp is a fixed-width 19-char segment: YYYY-MM-DD_HH-MM-SS
+		if len(rest) < 20 || rest[19] != '/' {
+			return BackupInfo{}, false
+		}
+		tsStr := rest[:19]
+		branch := rest[20:]
+		t, err := time.Parse("2006-01-02_15-04-05", tsStr)
+		if err != nil || branch == "" {
+			return BackupInfo{}, false
+		}
+		return BackupInfo{
+			BranchRef:    name,
+			SourceBranch: branch,
+			Kind:         BackupManual,
+			Timestamp:    t,
+		}, true
+	}
+
+	// Legacy manual: backups/<YYYY-MM-DD_HH-MM-SS>/<branch>
+	if strings.HasPrefix(name, LegacyManualPrefix+"/") {
+		rest := strings.TrimPrefix(name, LegacyManualPrefix+"/")
+		if len(rest) < 20 || rest[19] != '/' {
+			return BackupInfo{}, false
+		}
+		tsStr := rest[:19]
+		branch := rest[20:]
+		t, err := time.Parse("2006-01-02_15-04-05", tsStr)
+		if err != nil || branch == "" {
+			return BackupInfo{}, false
+		}
+		return BackupInfo{
+			BranchRef:    name,
+			SourceBranch: branch,
+			Kind:         BackupManual,
+			Timestamp:    t,
+		}, true
+	}
+
+	// Legacy auto: backup/<branch>/<nano-ts>  (excluding auto/manual subpaths)
+	if strings.HasPrefix(name, BackupPrefix+"/") {
+		rest := strings.TrimPrefix(name, BackupPrefix+"/")
+		if strings.HasPrefix(rest, AutoSubpath+"/") || strings.HasPrefix(rest, ManualSubpath+"/") {
+			return BackupInfo{}, false
+		}
+		lastSlash := strings.LastIndex(rest, "/")
+		if lastSlash < 0 {
+			return BackupInfo{}, false
+		}
+		branch := rest[:lastSlash]
+		tsStr := rest[lastSlash+1:]
+		nanos, err := strconv.ParseInt(tsStr, 10, 64)
+		if err != nil || branch == "" {
+			return BackupInfo{}, false
+		}
+		return BackupInfo{
+			BranchRef:    name,
+			SourceBranch: branch,
+			Kind:         BackupAuto,
+			Timestamp:    time.Unix(0, nanos),
+		}, true
+	}
+
+	return BackupInfo{}, false
+}
+
+// ListAllBackups returns all backup branches (auto and manual, old and new),
+// sorted newest-first.
+func (m *Manager) ListAllBackups() ([]BackupInfo, error) {
+	output, err := m.git.Run("branch", "-a")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list branches: %w", err)
+	}
+
+	var backups []BackupInfo
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "* ")
+		if line == "" {
+			continue
+		}
+
+		if info, ok := parseBackupBranch(line); ok {
+			backups = append(backups, info)
+		}
+	}
+
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].Timestamp.After(backups[j].Timestamp)
+	})
+
+	return backups, nil
+}
+
+// DeleteBackups deletes the given backup branches and returns the number deleted.
+func (m *Manager) DeleteBackups(backups []BackupInfo) (int, error) {
+	deleted := 0
+	for _, b := range backups {
+		err := m.git.DeleteBranch(b.BranchRef, true)
+		if err != nil {
+			return deleted, fmt.Errorf("failed to delete %s: %w", b.BranchRef, err)
+		}
+		deleted++
+	}
+	return deleted, nil
 }
 
 // GetBackupPath returns the default path for storing backup metadata
