@@ -323,6 +323,81 @@ func (r *Runner) StashPush(message string) error {
 	return err
 }
 
+// CherryPick cherry-picks one or more commits onto the current branch
+func (r *Runner) CherryPick(commits ...string) (string, error) {
+	args := append([]string{"cherry-pick"}, commits...)
+	return r.Run(args...)
+}
+
+// Reset resets HEAD to ref with the given mode (soft, mixed, or hard)
+func (r *Runner) Reset(ref, mode string) (string, error) {
+	switch mode {
+	case "soft", "mixed", "hard":
+	default:
+		return "", fmt.Errorf("invalid reset mode %q: must be soft, mixed, or hard", mode)
+	}
+	args := []string{"reset", "--" + mode}
+	if ref != "" {
+		args = append(args, ref)
+	}
+	return r.Run(args...)
+}
+
+// Add stages files at the given paths
+func (r *Runner) Add(paths []string) (string, error) {
+	args := append([]string{"add", "--"}, paths...)
+	return r.Run(args...)
+}
+
+// Commit creates a commit with the given message
+func (r *Runner) Commit(message string) (string, error) {
+	return r.Run("commit", "-m", message)
+}
+
+// Status returns porcelain status output
+func (r *Runner) Status() (string, error) {
+	return r.Run("status", "--porcelain")
+}
+
+// Diff returns diff output, optionally staged and/or filtered to paths
+func (r *Runner) Diff(staged bool, paths []string) (string, error) {
+	args := []string{"diff"}
+	if staged {
+		args = append(args, "--staged")
+	}
+	if len(paths) > 0 {
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+	return r.Run(args...)
+}
+
+// Log returns log output with optional range, limit, and stat
+func (r *Runner) Log(rangeSpec string, limit int, stat bool) (string, error) {
+	args := []string{"log", "--oneline"}
+	if stat {
+		args = append(args, "--stat")
+	}
+	if limit > 0 {
+		args = append(args, fmt.Sprintf("-n%d", limit))
+	}
+	if rangeSpec != "" {
+		args = append(args, rangeSpec)
+	}
+	return r.Run(args...)
+}
+
+// DiffStat returns diff --stat output against a ref
+func (r *Runner) DiffStat(ref string) (string, error) {
+	return r.Run("diff", "--stat", ref)
+}
+
+// StashPop pops the top stash entry
+func (r *Runner) StashPop() error {
+	_, err := r.Run("stash", "pop")
+	return err
+}
+
 // GetAllBranches returns all local branch names
 func (r *Runner) GetAllBranches() ([]string, error) {
 	output, err := r.Run("branch", "--format=%(refname:short)")

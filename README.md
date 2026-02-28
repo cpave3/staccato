@@ -68,6 +68,7 @@ st sync --down
 | `st graph share` | Share the graph via a pushable/fetchable git ref | |
 | `st graph local` | Move the graph back to local-only storage | |
 | `st graph which` | Show current graph storage mode | |
+| `st mcp` | Start the MCP server (stdio transport) | |
 
 ### `st attach`
 
@@ -173,6 +174,55 @@ In shared mode:
   }
 }
 ```
+
+## MCP Server
+
+Staccato includes an MCP (Model Context Protocol) server, allowing LLMs to programmatically manage stacked branches. This is useful for splitting monolithic PRs into focused stacks.
+
+### Starting the server
+
+```bash
+st mcp
+```
+
+This runs the MCP server over stdio. You don't typically run this directly — instead, configure your LLM client to launch it.
+
+### Adding to Claude Code
+
+```bash
+claude mcp add staccato -- st mcp
+```
+
+### Adding to OpenCode
+
+Add to your `opencode.json`:
+
+```json
+{
+  "mcpServers": {
+    "staccato": {
+      "command": "st",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Available tools (20)
+
+**Git helpers**: `st_git_log`, `st_git_diff_stat`, `st_git_cherry_pick`, `st_git_checkout`, `st_git_reset`, `st_git_add`, `st_git_commit`, `st_git_status`, `st_git_diff`
+
+**Stack info**: `st_log`, `st_status`, `st_current`
+
+**Branch creation**: `st_new`, `st_append`, `st_insert`
+
+**Management**: `st_attach`, `st_restack`, `st_continue`
+
+**Sync/PR**: `st_sync`, `st_pr`
+
+### Prompt
+
+The server exposes a `split-monolithic-pr` prompt that guides an LLM through analyzing a large PR and splitting it into focused, stacked branches. Accepts `base_branch` and `source_branch` arguments.
 
 ## Development
 

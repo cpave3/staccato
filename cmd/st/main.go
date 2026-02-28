@@ -1,13 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
 	"github.com/cpave3/staccato/pkg/output"
@@ -17,19 +16,11 @@ import (
 var (
 	verbose bool
 	rootCmd *cobra.Command
-
-	// trunkBranches are common trunk/root branch names that should be auto-detected as roots.
-	trunkBranches = []string{"main", "master", "develop", "trunk"}
 )
 
 // isTrunkBranch returns true if the branch name is a common trunk/root branch.
 func isTrunkBranch(name string) bool {
-	for _, t := range trunkBranches {
-		if name == t {
-			return true
-		}
-	}
-	return false
+	return stcontext.IsTrunkBranch(name)
 }
 
 func main() {
@@ -97,53 +88,19 @@ func init() {
 	rootCmd.AddCommand(prCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(graphCmd())
+	rootCmd.AddCommand(mcpCmd())
 }
 
 // getContext loads the graph and git runner for commands
 func getContext() (*graph.Graph, *git.Runner, *output.Printer, string, error) {
 	printer := output.NewPrinter(verbose)
 
-	// Find git repository root
-	gitRunner := git.NewRunner("")
-	repoPath, err := gitRunner.Run("rev-parse", "--show-toplevel")
+	sc, err := stcontext.Load("")
 	if err != nil {
-		return nil, nil, nil, "", fmt.Errorf("not a git repository")
+		return nil, nil, nil, "", err
 	}
 
-	gitRunner = git.NewRunner(repoPath)
-
-	var g *graph.Graph
-
-	switch {
-	case gitRunner.RefExists(graph.SharedGraphRef):
-		// Shared mode: load from git ref
-		data, err := gitRunner.ReadBlobRef(graph.SharedGraphRef)
-		if err != nil {
-			return nil, nil, nil, "", fmt.Errorf("failed to read shared graph ref: %w", err)
-		}
-		g = &graph.Graph{}
-		if err := json.Unmarshal(data, g); err != nil {
-			return nil, nil, nil, "", fmt.Errorf("failed to unmarshal shared graph: %w", err)
-		}
-		if g.Branches == nil {
-			g.Branches = make(map[string]*graph.Branch)
-		}
-
-	default:
-		// Local mode: load from file
-		graphPath := filepath.Join(repoPath, graph.DefaultGraphPath)
-		g, err = graph.LoadGraph(graphPath)
-		if err != nil {
-			// Graph doesn't exist yet, create with current branch as root
-			currentBranch, branchErr := gitRunner.GetCurrentBranch()
-			if branchErr != nil {
-				return nil, nil, nil, "", fmt.Errorf("failed to get current branch: %w", branchErr)
-			}
-			g = graph.NewGraph(currentBranch)
-		}
-	}
-
-	return g, gitRunner, printer, repoPath, nil
+	return sc.Graph, sc.Git, printer, sc.RepoPath, nil
 }
 
 // checkStaleness performs an offline check and prints a warning if local state is behind remote.
@@ -164,13 +121,10 @@ func checkStaleness(g *graph.Graph, gitRunner *git.Runner, printer *output.Print
 
 // saveContext saves the graph
 func saveContext(g *graph.Graph, repoPath string, gitRunner *git.Runner) error {
-	if gitRunner.RefExists(graph.SharedGraphRef) {
-		data, err := json.MarshalIndent(g, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal graph: %w", err)
-		}
-		return gitRunner.WriteBlobRef(graph.SharedGraphRef, data)
+	sc := &stcontext.StaccatoContext{
+		Graph:    g,
+		Git:      gitRunner,
+		RepoPath: repoPath,
 	}
-	graphPath := filepath.Join(repoPath, graph.DefaultGraphPath)
-	return g.Save(graphPath)
+	return sc.Save()
 }
