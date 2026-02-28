@@ -1,5 +1,8 @@
 # Staccato - Git Stack Management CLI
 
+![Tests](https://github.com/cpave3/staccato/actions/workflows/test.yml/badge.svg)
+![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/cpave3/b4ac84df7b53f7fc3281515f3d1add71/raw/staccato-coverage.json)
+
 A deterministic, offline-first Git stack management tool inspired by Graphite and Git Town.
 
 ## Overview
