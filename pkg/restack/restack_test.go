@@ -142,6 +142,168 @@ func TestEngine_IdentifiesConflictingBranches(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// TestGetLineage
+// ---------------------------------------------------------------------------
+
+func TestGetLineage(t *testing.T) {
+	t.Run("linear_chain_from_middle", func(t *testing.T) {
+		g := graph.NewGraph("main")
+		g.AddBranch("a", "main", "abc", "def")
+		g.AddBranch("b", "a", "def", "ghi")
+		g.AddBranch("c", "b", "ghi", "jkl")
+
+		lineage := GetLineage(g, "b")
+		expected := []string{"main", "a", "b", "c"}
+		if len(lineage) != len(expected) {
+			t.Fatalf("expected %d branches, got %d: %v", len(expected), len(lineage), lineage)
+		}
+		for i, name := range expected {
+			if lineage[i] != name {
+				t.Errorf("position %d: expected %s, got %s", i, name, lineage[i])
+			}
+		}
+	})
+
+	t.Run("from_root", func(t *testing.T) {
+		g := graph.NewGraph("main")
+		g.AddBranch("a", "main", "abc", "def")
+		g.AddBranch("b", "a", "def", "ghi")
+		g.AddBranch("c", "b", "ghi", "jkl")
+
+		lineage := GetLineage(g, "main")
+		expected := []string{"main", "a", "b", "c"}
+		if len(lineage) != len(expected) {
+			t.Fatalf("expected %d branches, got %d: %v", len(expected), len(lineage), lineage)
+		}
+		for i, name := range expected {
+			if lineage[i] != name {
+				t.Errorf("position %d: expected %s, got %s", i, name, lineage[i])
+			}
+		}
+	})
+
+	t.Run("from_leaf", func(t *testing.T) {
+		g := graph.NewGraph("main")
+		g.AddBranch("a", "main", "abc", "def")
+		g.AddBranch("b", "a", "def", "ghi")
+		g.AddBranch("c", "b", "ghi", "jkl")
+
+		lineage := GetLineage(g, "c")
+		expected := []string{"main", "a", "b", "c"}
+		if len(lineage) != len(expected) {
+			t.Fatalf("expected %d branches, got %d: %v", len(expected), len(lineage), lineage)
+		}
+		for i, name := range expected {
+			if lineage[i] != name {
+				t.Errorf("position %d: expected %s, got %s", i, name, lineage[i])
+			}
+		}
+	})
+
+	t.Run("forked_excludes_other_lineage", func(t *testing.T) {
+		g := graph.NewGraph("main")
+		g.AddBranch("a", "main", "abc", "def")
+		g.AddBranch("b", "a", "def", "ghi")
+		g.AddBranch("d", "main", "abc", "mno")
+
+		lineage := GetLineage(g, "a")
+		expected := []string{"main", "a", "b"}
+		if len(lineage) != len(expected) {
+			t.Fatalf("expected %d branches, got %d: %v", len(expected), len(lineage), lineage)
+		}
+		for i, name := range expected {
+			if lineage[i] != name {
+				t.Errorf("position %d: expected %s, got %s", i, name, lineage[i])
+			}
+		}
+		// d should not be in the lineage
+		for _, name := range lineage {
+			if name == "d" {
+				t.Error("lineage of 'a' should not include 'd'")
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestGetAncestors
+// ---------------------------------------------------------------------------
+
+func TestGetAncestors(t *testing.T) {
+	t.Run("linear_chain", func(t *testing.T) {
+		g := graph.NewGraph("main")
+		g.AddBranch("a", "main", "abc", "def")
+		g.AddBranch("b", "a", "def", "ghi")
+		g.AddBranch("c", "b", "ghi", "jkl")
+
+		ancestors := GetAncestors(g, "c")
+		expected := []string{"main", "a", "b", "c"}
+		if len(ancestors) != len(expected) {
+			t.Fatalf("expected %d ancestors, got %d: %v", len(expected), len(ancestors), ancestors)
+		}
+		for i, name := range expected {
+			if ancestors[i] != name {
+				t.Errorf("position %d: expected %s, got %s", i, name, ancestors[i])
+			}
+		}
+	})
+
+	t.Run("root_returns_self", func(t *testing.T) {
+		g := graph.NewGraph("main")
+		g.AddBranch("a", "main", "abc", "def")
+
+		ancestors := GetAncestors(g, "main")
+		if len(ancestors) != 1 || ancestors[0] != "main" {
+			t.Errorf("expected [main], got %v", ancestors)
+		}
+	})
+
+	t.Run("direct_child", func(t *testing.T) {
+		g := graph.NewGraph("main")
+		g.AddBranch("a", "main", "abc", "def")
+
+		ancestors := GetAncestors(g, "a")
+		expected := []string{"main", "a"}
+		if len(ancestors) != len(expected) {
+			t.Fatalf("expected %d ancestors, got %d: %v", len(expected), len(ancestors), ancestors)
+		}
+		for i, name := range expected {
+			if ancestors[i] != name {
+				t.Errorf("position %d: expected %s, got %s", i, name, ancestors[i])
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestIsBranchAtTip
+// ---------------------------------------------------------------------------
+
+func TestIsBranchAtTip(t *testing.T) {
+	g := graph.NewGraph("main")
+	g.AddBranch("a", "main", "abc", "def")
+	g.AddBranch("b", "a", "def", "ghi")
+
+	t.Run("tip_no_children", func(t *testing.T) {
+		if !IsBranchAtTip(g, "b") {
+			t.Error("b should be at tip (no children)")
+		}
+	})
+
+	t.Run("non_tip_has_children", func(t *testing.T) {
+		if IsBranchAtTip(g, "a") {
+			t.Error("a should NOT be at tip (has child b)")
+		}
+	})
+
+	t.Run("root_with_children", func(t *testing.T) {
+		if IsBranchAtTip(g, "main") {
+			t.Error("main should NOT be at tip (has child a)")
+		}
+	})
+}
+
 func indexOf(slice []string, item string) int {
 	for i, s := range slice {
 		if s == item {

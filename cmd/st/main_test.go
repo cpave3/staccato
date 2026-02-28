@@ -454,6 +454,27 @@ func TestContinue(t *testing.T) {
 		}
 	})
 
+	t.Run("still_conflicting", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("shared.txt", "f1 content")
+		repo.AddAndCommit("f1 commit")
+
+		// Create conflicting change on root
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root content")
+		repo.AddAndCommit("root conflict")
+
+		// Restack should fail with conflict
+		repo.Checkout("f1")
+		runStExpectError(t, "restack")
+
+		// Try to continue WITHOUT resolving the conflict
+		out := runStExpectError(t, "continue")
+		assertContains(t, out, "conflicts")
+	})
+
 	t.Run("error_no_rebase_in_progress", func(t *testing.T) {
 		setupRepoWithStack(t)
 		out := runStExpectError(t, "continue")
@@ -810,6 +831,48 @@ func TestRestore(t *testing.T) {
 
 		// Restore f1 from the backup
 		runSt(t, "restore", "f1")
+	})
+
+	t.Run("restore_current_branch", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1 original")
+		repo.AddAndCommit("f1 commit")
+
+		// Create a backup branch
+		cmd := exec.Command("git", "branch", "backup/f1/9999999999", "f1")
+		cmd.Dir = repo.Dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("failed to create backup: %v\n%s", err, out)
+		}
+
+		// Restore without specifying branch name (uses current branch)
+		out := runSt(t, "restore")
+		assertContains(t, out, "Restored")
+	})
+
+	t.Run("restore_all", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		// Create auto backup branches (restore --all uses ListBackups which matches auto format)
+		cmd := exec.Command("git", "branch", "backup/auto/f1/9999999999", "f1")
+		cmd.Dir = repo.Dir
+		cmd.Run()
+		cmd = exec.Command("git", "branch", "backup/auto/f2/9999999999", "f2")
+		cmd.Dir = repo.Dir
+		cmd.Run()
+
+		// Restore all
+		out := runSt(t, "restore", "--all")
+		assertContains(t, out, "Restored")
 	})
 
 	t.Run("error_no_backups", func(t *testing.T) {
@@ -1280,6 +1343,34 @@ func TestBackup(t *testing.T) {
 		setupRepoWithStack(t)
 		out := runStExpectError(t, "backup")
 		assertContains(t, out, "no branches")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestBackupList
+// ---------------------------------------------------------------------------
+
+func TestBackupList(t *testing.T) {
+	t.Run("no_backups", func(t *testing.T) {
+		setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runSt(t, "backup", "list")
+		assertContains(t, out, "No backups found")
+	})
+
+	t.Run("lists_backups", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		// Create a manual backup
+		runSt(t, "backup")
+
+		out := runSt(t, "backup", "list")
+		assertContains(t, out, "Found")
+		assertContains(t, out, "f1")
 	})
 }
 
