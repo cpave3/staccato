@@ -17,6 +17,9 @@ import (
 // stBinary holds the path to the compiled binary, built once in TestMain.
 var stBinary string
 
+// coverDir holds the GOCOVERDIR path when running with coverage instrumentation.
+var coverDir string
+
 func TestMain(m *testing.M) {
 	tmp, err := os.CreateTemp("", "st-bin-*")
 	if err != nil {
@@ -25,7 +28,18 @@ func TestMain(m *testing.M) {
 	tmp.Close()
 	stBinary = tmp.Name()
 
-	build := exec.Command("go", "build", "-o", stBinary, "./cmd/st/")
+	coverDir = os.Getenv("ST_COVER_DIR")
+	if coverDir != "" && !filepath.IsAbs(coverDir) {
+		// Resolve relative to project root (two levels up from cmd/st/).
+		coverDir = filepath.Join(mustGetwd(), "..", "..", coverDir)
+	}
+	buildArgs := []string{"build"}
+	if coverDir != "" {
+		buildArgs = append(buildArgs, "-cover")
+	}
+	buildArgs = append(buildArgs, "-o", stBinary, "./cmd/st/")
+
+	build := exec.Command("go", buildArgs...)
 	build.Dir = filepath.Join(mustGetwd(), "..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
 		panic("build failed: " + string(out))
@@ -42,6 +56,16 @@ func mustGetwd() string {
 		panic(err)
 	}
 	return wd
+}
+
+// setCoverEnv sets GOCOVERDIR on cmd when coverage instrumentation is active.
+func setCoverEnv(cmd *exec.Cmd) {
+	if coverDir != "" {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, "GOCOVERDIR="+coverDir)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +105,7 @@ func setupRepoWithStack(t *testing.T) (*testutil.GitRepo, string) {
 func runSt(t *testing.T, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(stBinary, args...)
+	setCoverEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("st %v failed: %v\nOutput: %s", args, err, out)
@@ -92,6 +117,7 @@ func runSt(t *testing.T, args ...string) string {
 func runStExpectError(t *testing.T, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(stBinary, args...)
+	setCoverEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("st %v expected error but succeeded\nOutput: %s", args, out)
@@ -421,10 +447,32 @@ func TestContinue(t *testing.T) {
 		// GIT_EDITOR=true so rebase --continue doesn't open editor
 		contCmd := exec.Command(stBinary, "continue")
 		contCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+		setCoverEnv(contCmd)
 		out, err := contCmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("st continue failed: %v\nOutput: %s", err, out)
 		}
+	})
+
+	t.Run("still_conflicting", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("shared.txt", "f1 content")
+		repo.AddAndCommit("f1 commit")
+
+		// Create conflicting change on root
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root content")
+		repo.AddAndCommit("root conflict")
+
+		// Restack should fail with conflict
+		repo.Checkout("f1")
+		runStExpectError(t, "restack")
+
+		// Try to continue WITHOUT resolving the conflict
+		out := runStExpectError(t, "continue")
+		assertContains(t, out, "conflicts")
 	})
 
 	t.Run("error_no_rebase_in_progress", func(t *testing.T) {
@@ -783,6 +831,48 @@ func TestRestore(t *testing.T) {
 
 		// Restore f1 from the backup
 		runSt(t, "restore", "f1")
+	})
+
+	t.Run("restore_current_branch", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1 original")
+		repo.AddAndCommit("f1 commit")
+
+		// Create a backup branch
+		cmd := exec.Command("git", "branch", "backup/f1/9999999999", "f1")
+		cmd.Dir = repo.Dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("failed to create backup: %v\n%s", err, out)
+		}
+
+		// Restore without specifying branch name (uses current branch)
+		out := runSt(t, "restore")
+		assertContains(t, out, "Restored")
+	})
+
+	t.Run("restore_all", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		// Create auto backup branches (restore --all uses ListBackups which matches auto format)
+		cmd := exec.Command("git", "branch", "backup/auto/f1/9999999999", "f1")
+		cmd.Dir = repo.Dir
+		cmd.Run()
+		cmd = exec.Command("git", "branch", "backup/auto/f2/9999999999", "f2")
+		cmd.Dir = repo.Dir
+		cmd.Run()
+
+		// Restore all
+		out := runSt(t, "restore", "--all")
+		assertContains(t, out, "Restored")
 	})
 
 	t.Run("error_no_backups", func(t *testing.T) {
@@ -1253,6 +1343,34 @@ func TestBackup(t *testing.T) {
 		setupRepoWithStack(t)
 		out := runStExpectError(t, "backup")
 		assertContains(t, out, "no branches")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestBackupList
+// ---------------------------------------------------------------------------
+
+func TestBackupList(t *testing.T) {
+	t.Run("no_backups", func(t *testing.T) {
+		setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runSt(t, "backup", "list")
+		assertContains(t, out, "No backups found")
+	})
+
+	t.Run("lists_backups", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		// Create a manual backup
+		runSt(t, "backup")
+
+		out := runSt(t, "backup", "list")
+		assertContains(t, out, "Found")
+		assertContains(t, out, "f1")
 	})
 }
 

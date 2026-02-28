@@ -329,6 +329,67 @@ func TestBackupManager_DeleteBackups(t *testing.T) {
 	}
 }
 
+func TestRestoreStack(t *testing.T) {
+	tmpDir, gitRunner, manager := initTestRepo(t)
+
+	// Create two feature branches
+	exec.Command("git", "-C", tmpDir, "checkout", "-b", "f1").Run()
+	os.WriteFile(filepath.Join(tmpDir, "f1.txt"), []byte("f1"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "f1 commit").Run()
+
+	exec.Command("git", "-C", tmpDir, "checkout", "main").Run()
+	exec.Command("git", "-C", tmpDir, "checkout", "-b", "f2").Run()
+	os.WriteFile(filepath.Join(tmpDir, "f2.txt"), []byte("f2"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "f2 commit").Run()
+
+	// Record original SHAs
+	origF1, _ := gitRunner.GetBranchSHA("f1")
+	origF2, _ := gitRunner.GetBranchSHA("f2")
+
+	// Create backups for both
+	backups, err := manager.CreateBackupsForStack([]string{"f1", "f2"})
+	if err != nil {
+		t.Fatalf("CreateBackupsForStack failed: %v", err)
+	}
+
+	// Modify both branches
+	exec.Command("git", "-C", tmpDir, "checkout", "f1").Run()
+	os.WriteFile(filepath.Join(tmpDir, "f1.txt"), []byte("f1 modified"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "f1 modify").Run()
+
+	exec.Command("git", "-C", tmpDir, "checkout", "f2").Run()
+	os.WriteFile(filepath.Join(tmpDir, "f2.txt"), []byte("f2 modified"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "f2 modify").Run()
+
+	// Restore stack
+	err = manager.RestoreStack(backups)
+	if err != nil {
+		t.Fatalf("RestoreStack failed: %v", err)
+	}
+
+	// Verify both branches are restored
+	restoredF1, _ := gitRunner.GetBranchSHA("f1")
+	restoredF2, _ := gitRunner.GetBranchSHA("f2")
+	if restoredF1 != origF1 {
+		t.Errorf("f1 SHA: expected %s, got %s", origF1, restoredF1)
+	}
+	if restoredF2 != origF2 {
+		t.Errorf("f2 SHA: expected %s, got %s", origF2, restoredF2)
+	}
+}
+
+func TestGetBackupPath(t *testing.T) {
+	path := GetBackupPath("/repo")
+	expected := filepath.Join("/repo", ".git", "stack", "backups")
+	if path != expected {
+		t.Errorf("GetBackupPath = %q, want %q", path, expected)
+	}
+}
+
 func TestBackupManager_CreateManualBackup_NewNaming(t *testing.T) {
 	_, gitRunner, manager := initTestRepo(t)
 

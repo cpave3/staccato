@@ -4,6 +4,10 @@
 # Test binaries
 *.test
 
+# Coverage
+/.cover/
+coverage.out
+
 # Go build cache
 /vendor/
 

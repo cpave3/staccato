@@ -21,6 +21,21 @@ tasks:
     cmds:
       - go test ./cmd/st/ -v -count=1
 
+  test:cover:
+    desc: Run tests with merged unit + E2E coverage
+    cmds:
+      - rm -rf .cover && mkdir -p .cover/e2e
+      - go test $(go list ./... | grep -v /cmd/st) -count=1 -coverprofile=.cover/unit.cov
+      - ST_COVER_DIR=.cover/e2e go test ./cmd/st/ -v -count=1
+      - go tool covdata textfmt -i=.cover/e2e -o=.cover/e2e.cov
+      - |
+        awk '
+          FNR==1 && /^mode:/ { if (!m) { m=$0; print } next }
+          { k=$1 " " $2; if($3+0 >= c[k]+0) c[k]=$3+0 }
+          END { for(k in c) print k, c[k] }
+        ' .cover/unit.cov .cover/e2e.cov > .cover/merged.cov
+      - go tool cover -func=.cover/merged.cov | tail -1
+
   lint:
     desc: Run golangci-lint
     cmds:
