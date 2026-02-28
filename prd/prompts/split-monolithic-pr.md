@@ -109,13 +109,14 @@ If cherry-pick conflicts:
 Use when a single commit contains changes for multiple branches, or when you want cleaner history:
 
 1. **Note the original SHA** — run `st_git_log` and record the current HEAD SHA for recovery
-2. `st_git_checkout` to the source branch
-3. `st_git_reset` with `mode: "soft"` and `ref` pointing to base branch
+2. **Create a backup** — run `st backup` (CLI) or use the backup tool to snapshot all stack branches before any destructive operations. This gives you a named restore point beyond just the SHA.
+3. `st_git_checkout` to the source branch
+4. `st_git_reset` with `mode: "soft"` and `ref` pointing to base branch
    - This moves HEAD to the base but keeps all changes **staged**
-4. `st_git_reset` with `mode: "mixed"` (no ref needed)
+5. `st_git_reset` with `mode: "mixed"` (no ref needed)
    - This **unstages everything**, leaving all changes in the working tree as unstaged modifications
-5. `st_git_status` to see all changed files as unstaged modifications
-6. For each branch (in dependency order):
+6. `st_git_status` to see all changed files as unstaged modifications
+7. For each branch (in dependency order):
    - `st_git_checkout` to the target branch — uncommitted changes stay in the working tree when there are no conflicts. With stacked branches, `st append` creates the next branch from the current commit, so uncommitted changes carry forward cleanly.
    - `st_git_add` whole files that belong on this branch
    - `st_git_commit` with a descriptive message
@@ -190,5 +191,5 @@ For each branch (bottom to top):
 - **Conflicts**: If `st_restack` conflicts, resolve and `st_continue`
 - **Merged branches**: `st_sync` auto-detects and removes merged branches
 - **Iteration**: Edit earlier branches, then `st_restack` to propagate
-- **Recovery**: If the split goes wrong, `git reset --hard <original-sha>` restores the original state. Always note the SHA before starting.
+- **Recovery**: If the split goes wrong, `git reset --hard <original-sha>` restores the original state, or use `st restore` to recover from a backup. Always note the SHA and create a backup before starting.
 - **Verify often**: Use `st_git_status` and `st_git_diff` to check state before each commit
