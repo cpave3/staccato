@@ -17,6 +17,9 @@ import (
 // stBinary holds the path to the compiled binary, built once in TestMain.
 var stBinary string
 
+// coverDir holds the GOCOVERDIR path when running with coverage instrumentation.
+var coverDir string
+
 func TestMain(m *testing.M) {
 	tmp, err := os.CreateTemp("", "st-bin-*")
 	if err != nil {
@@ -25,7 +28,18 @@ func TestMain(m *testing.M) {
 	tmp.Close()
 	stBinary = tmp.Name()
 
-	build := exec.Command("go", "build", "-o", stBinary, "./cmd/st/")
+	coverDir = os.Getenv("ST_COVER_DIR")
+	if coverDir != "" && !filepath.IsAbs(coverDir) {
+		// Resolve relative to project root (two levels up from cmd/st/).
+		coverDir = filepath.Join(mustGetwd(), "..", "..", coverDir)
+	}
+	buildArgs := []string{"build"}
+	if coverDir != "" {
+		buildArgs = append(buildArgs, "-cover")
+	}
+	buildArgs = append(buildArgs, "-o", stBinary, "./cmd/st/")
+
+	build := exec.Command("go", buildArgs...)
 	build.Dir = filepath.Join(mustGetwd(), "..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
 		panic("build failed: " + string(out))
@@ -42,6 +56,16 @@ func mustGetwd() string {
 		panic(err)
 	}
 	return wd
+}
+
+// setCoverEnv sets GOCOVERDIR on cmd when coverage instrumentation is active.
+func setCoverEnv(cmd *exec.Cmd) {
+	if coverDir != "" {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, "GOCOVERDIR="+coverDir)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +105,7 @@ func setupRepoWithStack(t *testing.T) (*testutil.GitRepo, string) {
 func runSt(t *testing.T, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(stBinary, args...)
+	setCoverEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("st %v failed: %v\nOutput: %s", args, err, out)
@@ -92,6 +117,7 @@ func runSt(t *testing.T, args ...string) string {
 func runStExpectError(t *testing.T, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(stBinary, args...)
+	setCoverEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("st %v expected error but succeeded\nOutput: %s", args, out)
@@ -421,6 +447,7 @@ func TestContinue(t *testing.T) {
 		// GIT_EDITOR=true so rebase --continue doesn't open editor
 		contCmd := exec.Command(stBinary, "continue")
 		contCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+		setCoverEnv(contCmd)
 		out, err := contCmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("st continue failed: %v\nOutput: %s", err, out)
