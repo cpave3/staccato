@@ -603,6 +603,86 @@ func TestGitRunner_DiffStat(t *testing.T) {
 	}
 }
 
+// initRepoWithRemote creates a local repo with a bare "origin" remote and an initial commit.
+func initRepoWithRemote(t *testing.T) (string, *Runner) {
+	t.Helper()
+
+	// Create a bare repo to act as origin
+	bareDir := t.TempDir()
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run(); err != nil {
+		t.Fatalf("failed to init bare repo: %v", err)
+	}
+
+	// Create a local repo with an initial commit
+	tmpDir, git := initRepoWithCommit(t)
+
+	// Add the bare repo as origin and push main
+	exec.Command("git", "-C", tmpDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", tmpDir, "push", "-u", "origin", "main").Run()
+
+	return tmpDir, git
+}
+
+func TestGitRunner_Push_SetsUpstream(t *testing.T) {
+	tmpDir, git := initRepoWithRemote(t)
+
+	// Create a new branch and commit
+	exec.Command("git", "-C", tmpDir, "checkout", "-b", "feature").Run()
+	os.WriteFile(filepath.Join(tmpDir, "feat.txt"), []byte("feat"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "feature commit").Run()
+
+	// Push via Runner — should set upstream
+	if err := git.Push("feature", false); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	// Verify upstream is set
+	out, err := exec.Command("git", "-C", tmpDir, "config", "branch.feature.remote").Output()
+	if err != nil {
+		t.Fatalf("upstream remote not set: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "origin" {
+		t.Errorf("expected upstream remote 'origin', got %q", strings.TrimSpace(string(out)))
+	}
+
+	mergeRef, err := exec.Command("git", "-C", tmpDir, "config", "branch.feature.merge").Output()
+	if err != nil {
+		t.Fatalf("upstream merge ref not set: %v", err)
+	}
+	if strings.TrimSpace(string(mergeRef)) != "refs/heads/feature" {
+		t.Errorf("expected upstream merge 'refs/heads/feature', got %q", strings.TrimSpace(string(mergeRef)))
+	}
+}
+
+func TestGitRunner_PushAll_SetsUpstream(t *testing.T) {
+	tmpDir, git := initRepoWithRemote(t)
+
+	// Create two branches with commits
+	for _, branch := range []string{"feat-a", "feat-b"} {
+		exec.Command("git", "-C", tmpDir, "checkout", "main").Run()
+		exec.Command("git", "-C", tmpDir, "checkout", "-b", branch).Run()
+		os.WriteFile(filepath.Join(tmpDir, branch+".txt"), []byte(branch), 0644)
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+		exec.Command("git", "-C", tmpDir, "commit", "-m", branch+" commit").Run()
+	}
+
+	if err := git.PushAll([]string{"feat-a", "feat-b"}, false); err != nil {
+		t.Fatalf("PushAll: %v", err)
+	}
+
+	// Verify upstream is set for both
+	for _, branch := range []string{"feat-a", "feat-b"} {
+		out, err := exec.Command("git", "-C", tmpDir, "config", "branch."+branch+".remote").Output()
+		if err != nil {
+			t.Fatalf("upstream remote not set for %s: %v", branch, err)
+		}
+		if strings.TrimSpace(string(out)) != "origin" {
+			t.Errorf("branch %s: expected upstream remote 'origin', got %q", branch, strings.TrimSpace(string(out)))
+		}
+	}
+}
+
 func TestGitRunner_GetMergeBase(t *testing.T) {
 	tmpDir := t.TempDir()
 	cmd := exec.Command("git", "init", "-b", "main")

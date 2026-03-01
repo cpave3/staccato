@@ -193,7 +193,7 @@ This runs the MCP server over stdio. You don't typically run this directly — i
 ### Adding to Claude Code
 
 ```bash
-claude mcp add staccato -- st mcp
+claude mcp add staccato --user -- st mcp
 ```
 
 ### Adding to OpenCode
