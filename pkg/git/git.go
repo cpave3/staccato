@@ -119,7 +119,7 @@ func (r *Runner) BranchExists(name string) (bool, error) {
 
 // Push pushes the current branch to the remote
 func (r *Runner) Push(branch string, force bool) error {
-	args := []string{"push", "origin", branch}
+	args := []string{"push", "-u", "origin", branch}
 	if force {
 		args = append(args, "--force-with-lease")
 	}
@@ -130,7 +130,7 @@ func (r *Runner) Push(branch string, force bool) error {
 // PushAll pushes all branches in the stack to the remote
 func (r *Runner) PushAll(branches []string, dryRun bool) error {
 	for _, branch := range branches {
-		args := []string{"push", "origin", branch}
+		args := []string{"push", "-u", "origin", branch}
 		if dryRun {
 			args = append(args, "--dry-run")
 		}
