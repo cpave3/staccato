@@ -72,6 +72,13 @@ func (r *Runner) Rebase(target string) error {
 	return err
 }
 
+// RebaseOnto rebases the current branch onto newBase, replaying only commits after upstream.
+// Equivalent to: git rebase --onto <newBase> <upstream>
+func (r *Runner) RebaseOnto(newBase, upstream string) error {
+	_, err := r.Run("rebase", "--onto", newBase, upstream)
+	return err
+}
+
 // RebaseContinue continues a rebase after conflict resolution
 func (r *Runner) RebaseContinue() error {
 	_, err := r.Run("rebase", "--continue")

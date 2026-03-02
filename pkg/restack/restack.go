@@ -1,7 +1,10 @@
 package restack
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/git"
@@ -16,6 +19,43 @@ type Result struct {
 	Completed   []string
 	Backups     map[string]string
 	Error       error
+}
+
+// RestackState persists lineage information across restack/continue invocations.
+// Saved to .git/stack/restack-state.json when a restack hits a conflict.
+type RestackState struct {
+	Lineage []string `json:"lineage"`
+}
+
+// SaveRestackState writes the restack state to disk.
+func SaveRestackState(repoPath string, state *RestackState) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal restack state: %w", err)
+	}
+	stateDir := filepath.Join(repoPath, ".git", "stack")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return fmt.Errorf("failed to create state directory: %w", err)
+	}
+	return os.WriteFile(filepath.Join(stateDir, "restack-state.json"), data, 0644)
+}
+
+// LoadRestackState reads the restack state from disk.
+func LoadRestackState(repoPath string) (*RestackState, error) {
+	data, err := os.ReadFile(filepath.Join(repoPath, ".git", "stack", "restack-state.json"))
+	if err != nil {
+		return nil, err
+	}
+	var state RestackState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal restack state: %w", err)
+	}
+	return &state, nil
+}
+
+// ClearRestackState removes the restack state file.
+func ClearRestackState(repoPath string) {
+	os.Remove(filepath.Join(repoPath, ".git", "stack", "restack-state.json"))
 }
 
 // Engine handles the restack logic
@@ -173,189 +213,142 @@ func IsBranchAtTip(g *graph.Graph, branch string) bool {
 	return len(children) == 0
 }
 
-// Restack performs a restack operation starting from the root branch
-func (e *Engine) Restack(g *graph.Graph, startBranch string) (*Result, error) {
+// restackBranches is the core restack logic that rebases a set of branches
+// in topological order. It does NOT create backups — callers handle that.
+func (e *Engine) restackBranches(g *graph.Graph, branches []string) (*Result, error) {
 	result := &Result{
 		Success:   false,
 		Completed: []string{},
 		Backups:   make(map[string]string),
 	}
 
+	// Enable rerere for conflict resolution
+	if e.git != nil {
+		if err := e.git.EnableRerere(); err != nil {
+			// Non-fatal: continue even if rerere can't be enabled
+			fmt.Printf("Warning: could not enable rerere: %v\n", err)
+		}
+	}
+
+	// Get topological order
+	sorted, err := TopologicalSort(g, g.Root)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to sort branches: %w", err)
+		return result, result.Error
+	}
+
+	// Filter to only branches in our set
+	var branchesToRestack []string
+	for _, branch := range sorted {
+		if contains(branches, branch) {
+			branchesToRestack = append(branchesToRestack, branch)
+		}
+	}
+
+	// Rebase each branch onto its parent
+	for _, branch := range branchesToRestack {
+		b, exists := g.GetBranch(branch)
+		if !exists {
+			result.Error = fmt.Errorf("branch %s not found in graph", branch)
+			return result, result.Error
+		}
+
+		// Checkout the branch
+		if err := e.git.CheckoutBranch(branch); err != nil {
+			result.Error = fmt.Errorf("failed to checkout %s: %w", branch, err)
+			return result, result.Error
+		}
+
+		// Use --onto with BaseSHA for correct stacked rebasing.
+		// This replays only the branch's own commits (BaseSHA..HEAD) onto the parent,
+		// avoiding conflicts from replaying ancestor commits.
+		var rebaseErr error
+		if b.BaseSHA != "" {
+			rebaseErr = e.git.RebaseOnto(b.Parent, b.BaseSHA)
+		} else {
+			rebaseErr = e.git.Rebase(b.Parent)
+		}
+
+		if rebaseErr != nil {
+			// Check if there's a conflict
+			inProgress, _ := e.git.IsRebaseInProgress()
+			if inProgress {
+				result.Conflicts = true
+				result.ConflictsAt = branch
+				result.Error = fmt.Errorf("conflict while rebasing %s onto %s", branch, b.Parent)
+				return result, result.Error
+			}
+			result.Error = fmt.Errorf("failed to rebase %s: %w", branch, rebaseErr)
+			return result, result.Error
+		}
+
+		// Update branch metadata with new SHAs
+		newBaseSHA, _ := e.git.GetCommitSHA(b.Parent)
+		newHeadSHA, _ := e.git.GetCommitSHA(branch)
+		g.UpdateBranch(branch, newBaseSHA, newHeadSHA)
+
+		result.Completed = append(result.Completed, branch)
+	}
+
+	result.Success = true
+	return result, nil
+}
+
+// Restack performs a restack operation starting from the root branch
+func (e *Engine) Restack(g *graph.Graph, startBranch string) (*Result, error) {
 	// Get all branches in the stack
 	stackBranches := GetStackBranches(g, startBranch)
 
 	// Create backups before any destructive operations
+	var backups map[string]string
 	if e.backup != nil {
-		backups, err := e.backup.CreateBackupsForStack(stackBranches)
+		var err error
+		backups, err = e.backup.CreateBackupsForStack(stackBranches)
 		if err != nil {
-			result.Error = fmt.Errorf("failed to create backups: %w", err)
-			return result, result.Error
+			return &Result{
+				Error:   fmt.Errorf("failed to create backups: %w", err),
+				Backups: backups,
+			}, err
 		}
+	}
+
+	result, err := e.restackBranches(g, stackBranches)
+	if backups != nil {
 		result.Backups = backups
 	}
-
-	// Enable rerere for conflict resolution
-	if e.git != nil {
-		if err := e.git.EnableRerere(); err != nil {
-			// Non-fatal: continue even if rerere can't be enabled
-			fmt.Printf("Warning: could not enable rerere: %v\n", err)
-		}
-	}
-
-	// Get topological order
-	sorted, err := TopologicalSort(g, startBranch)
-	if err != nil {
-		result.Error = fmt.Errorf("failed to sort branches: %w", err)
-		return result, result.Error
-	}
-
-	// Filter to only branches in our stack
-	var branchesToRestack []string
-	for _, branch := range sorted {
-		if contains(stackBranches, branch) {
-			branchesToRestack = append(branchesToRestack, branch)
-		}
-	}
-
-	// Rebase each branch onto its parent
-	for _, branch := range branchesToRestack {
-		if branch == startBranch {
-			// Root branch doesn't need rebasing
-			result.Completed = append(result.Completed, branch)
-			continue
-		}
-
-		b, exists := g.GetBranch(branch)
-		if !exists {
-			result.Error = fmt.Errorf("branch %s not found in graph", branch)
-			return result, result.Error
-		}
-
-		// Checkout the branch
-		if err := e.git.CheckoutBranch(branch); err != nil {
-			result.Error = fmt.Errorf("failed to checkout %s: %w", branch, err)
-			return result, result.Error
-		}
-
-		// Rebase onto parent
-		if err := e.git.Rebase(b.Parent); err != nil {
-			// Check if there's a conflict
-			inProgress, _ := e.git.IsRebaseInProgress()
-			if inProgress {
-				result.Conflicts = true
-				result.ConflictsAt = branch
-				result.Error = fmt.Errorf("conflict while rebasing %s onto %s", branch, b.Parent)
-				return result, result.Error
-			}
-			result.Error = fmt.Errorf("failed to rebase %s: %w", branch, err)
-			return result, result.Error
-		}
-
-		// Update branch metadata with new SHAs
-		newBaseSHA, _ := e.git.GetCommitSHA(b.Parent)
-		newHeadSHA, _ := e.git.GetCommitSHA(branch)
-		g.UpdateBranch(branch, newBaseSHA, newHeadSHA)
-
-		result.Completed = append(result.Completed, branch)
-	}
-
-	result.Success = true
-	return result, nil
+	return result, err
 }
 
 // RestackLineage performs a restack operation for a specific set of branches (a lineage)
 func (e *Engine) RestackLineage(g *graph.Graph, startBranch string, lineageBranches []string) (*Result, error) {
+	// Create backups before any destructive operations
+	var backups map[string]string
+	if e.backup != nil {
+		var err error
+		backups, err = e.backup.CreateBackupsForStack(lineageBranches)
+		if err != nil {
+			return &Result{
+				Error:   fmt.Errorf("failed to create backups: %w", err),
+				Backups: backups,
+			}, err
+		}
+	}
+
+	result, err := e.restackBranches(g, lineageBranches)
+	if backups != nil {
+		result.Backups = backups
+	}
+	return result, err
+}
+
+// Continue resumes a restack after conflict resolution.
+// lineageBranches specifies which branches to continue restacking.
+// If nil, falls back to restacking all branches from root.
+func (e *Engine) Continue(g *graph.Graph, lineageBranches []string) (*Result, error) {
 	result := &Result{
 		Success:   false,
 		Completed: []string{},
 		Backups:   make(map[string]string),
-	}
-
-	// Create backups before any destructive operations
-	if e.backup != nil {
-		backups, err := e.backup.CreateBackupsForStack(lineageBranches)
-		if err != nil {
-			result.Error = fmt.Errorf("failed to create backups: %w", err)
-			return result, result.Error
-		}
-		result.Backups = backups
-	}
-
-	// Enable rerere for conflict resolution
-	if e.git != nil {
-		if err := e.git.EnableRerere(); err != nil {
-			// Non-fatal: continue even if rerere can't be enabled
-			fmt.Printf("Warning: could not enable rerere: %v\n", err)
-		}
-	}
-
-	// Get topological order
-	sorted, err := TopologicalSort(g, startBranch)
-	if err != nil {
-		result.Error = fmt.Errorf("failed to sort branches: %w", err)
-		return result, result.Error
-	}
-
-	// Filter to only branches in our lineage
-	var branchesToRestack []string
-	for _, branch := range sorted {
-		if contains(lineageBranches, branch) {
-			branchesToRestack = append(branchesToRestack, branch)
-		}
-	}
-
-	// Rebase each branch onto its parent
-	for _, branch := range branchesToRestack {
-		if branch == startBranch && branch == g.Root {
-			// Root branch doesn't need rebasing
-			result.Completed = append(result.Completed, branch)
-			continue
-		}
-
-		b, exists := g.GetBranch(branch)
-		if !exists {
-			result.Error = fmt.Errorf("branch %s not found in graph", branch)
-			return result, result.Error
-		}
-
-		// Checkout the branch
-		if err := e.git.CheckoutBranch(branch); err != nil {
-			result.Error = fmt.Errorf("failed to checkout %s: %w", branch, err)
-			return result, result.Error
-		}
-
-		// Rebase onto parent
-		if err := e.git.Rebase(b.Parent); err != nil {
-			// Check if there's a conflict
-			inProgress, _ := e.git.IsRebaseInProgress()
-			if inProgress {
-				result.Conflicts = true
-				result.ConflictsAt = branch
-				result.Error = fmt.Errorf("conflict while rebasing %s onto %s", branch, b.Parent)
-				return result, result.Error
-			}
-			result.Error = fmt.Errorf("failed to rebase %s: %w", branch, err)
-			return result, result.Error
-		}
-
-		// Update branch metadata with new SHAs
-		newBaseSHA, _ := e.git.GetCommitSHA(b.Parent)
-		newHeadSHA, _ := e.git.GetCommitSHA(branch)
-		g.UpdateBranch(branch, newBaseSHA, newHeadSHA)
-
-		result.Completed = append(result.Completed, branch)
-	}
-
-	result.Success = true
-	return result, nil
-}
-
-// Continue resumes a restack after conflict resolution
-func (e *Engine) Continue(g *graph.Graph, startBranch string, backups map[string]string) (*Result, error) {
-	result := &Result{
-		Success:   false,
-		Completed: []string{},
-		Backups:   backups,
 	}
 
 	// Check if rebase is in progress
@@ -392,8 +385,14 @@ func (e *Engine) Continue(g *graph.Graph, startBranch string, backups map[string
 		g.UpdateBranch(currentBranch, newBaseSHA, newHeadSHA)
 	}
 
-	// Continue with remaining branches
-	return e.Restack(g, startBranch)
+	// Continue with remaining branches — no backup creation (preserves originals)
+	if lineageBranches != nil {
+		return e.restackBranches(g, lineageBranches)
+	}
+
+	// Fallback: restack all from root (backwards compatibility)
+	stackBranches := GetStackBranches(g, g.Root)
+	return e.restackBranches(g, stackBranches)
 }
 
 // Abort cancels the current restack and restores from backups
