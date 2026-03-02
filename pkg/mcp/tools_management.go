@@ -128,14 +128,15 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 			backupMgr := backup.NewManager(sc.Git, sc.RepoPath)
 			engine := restack.NewEngine(sc.Git, backupMgr)
 
-			currentBranch, _ := sc.Git.GetCurrentBranch()
-			attacher := attach.NewAttacher(sc.Git, nil)
-			rootBranch := attacher.FindRoot(sc.Graph, currentBranch)
-			if rootBranch == "" {
-				rootBranch = sc.Graph.Root
+			// Load restack state to get lineage info
+			var lineage []string
+			state, stateErr := restack.LoadRestackState(sc.RepoPath)
+			if stateErr == nil && state != nil {
+				lineage = state.Lineage
 			}
 
-			result, err := engine.Continue(sc.Graph, rootBranch, nil)
+			result, err := engine.Continue(sc.Graph, lineage)
+			restack.ClearRestackState(sc.RepoPath)
 			sc.Save()
 
 			if err != nil {

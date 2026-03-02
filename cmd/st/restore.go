@@ -27,6 +27,15 @@ Use this to recover from failed restack operations.`,
 			backupMgr := backup.NewManager(git, repoPath)
 
 			if all {
+				// Abort any in-progress rebase first (git refuses checkout during rebase)
+				inProgress, _ := git.IsRebaseInProgress()
+				if inProgress {
+					if err := git.RebaseAbort(); err != nil {
+						printer.Error("Failed to abort in-progress rebase: %v", err)
+						return fmt.Errorf("failed to abort rebase: %w", err)
+					}
+				}
+
 				// Restore all branches in stack
 				currentBranch, _ := git.GetCurrentBranch()
 				attacher := attach.NewAttacher(git, printer)
@@ -47,6 +56,30 @@ Use this to recover from failed restack operations.`,
 						}
 					}
 				}
+
+				// Update graph state to match restored branch SHAs
+				for _, branch := range branches {
+					if branch == g.Root {
+						continue
+					}
+					b, exists := g.GetBranch(branch)
+					if !exists {
+						continue
+					}
+					newHeadSHA, err := git.GetCommitSHA(branch)
+					if err != nil {
+						continue
+					}
+					newBaseSHA, err := git.GetCommitSHA(b.Parent)
+					if err != nil {
+						continue
+					}
+					g.UpdateBranch(branch, newBaseSHA, newHeadSHA)
+				}
+				saveContext(g, repoPath, git)
+
+				// Clean up restack state
+				restack.ClearRestackState(repoPath)
 			} else {
 				// Restore specific branch
 				var branchName string

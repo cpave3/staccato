@@ -60,6 +60,10 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 
 			if err != nil {
 				if result.Conflicts {
+					// Save restack state so continue knows the lineage
+					restack.SaveRestackState(repoPath, &restack.RestackState{
+						Lineage: lineageBranches,
+					})
 					printer.ConflictDetected(result.ConflictsAt)
 					return fmt.Errorf("conflict during restack - resolve and run 'st continue'")
 				}
@@ -71,7 +75,8 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 				return err
 			}
 
-			// Cleanup backups on success
+			// Cleanup backups and restack state on success
+			restack.ClearRestackState(repoPath)
 			if len(result.Backups) > 0 {
 				backupMgr.CleanupStackBackups(lineageBranches)
 			}
