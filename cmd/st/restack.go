@@ -21,7 +21,13 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 				return err
 			}
 
+			if err := requireBranch(git); err != nil {
+				return err
+			}
+
 			checkStaleness(g, git, printer)
+
+			warnDirtyTree(git, printer)
 
 			currentBranch, _ := git.GetCurrentBranch()
 
@@ -65,7 +71,7 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 						Lineage: lineageBranches,
 					})
 					printer.ConflictDetected(result.ConflictsAt)
-					return fmt.Errorf("conflict during restack - resolve and run 'st continue'")
+					return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
 				}
 
 				// Check if we should restore

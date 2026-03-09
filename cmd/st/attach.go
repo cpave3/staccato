@@ -221,11 +221,17 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 		return fmt.Errorf("failed to list branches: %w", err)
 	}
 
-	// Add all branches as candidates
+	// Add branches as candidates, filtering out already-stacked branches during recursive attach
 	seen := make(map[string]bool)
 	for _, name := range allBranches {
 		if name == branchToAttach {
 			continue // Don't include the branch being attached
+		}
+		// During recursive attach, hide branches already in the graph (except root)
+		if stopIfTracked && name != g.Root {
+			if _, inGraph := g.Branches[name]; inGraph {
+				continue
+			}
 		}
 		if !seen[name] {
 			seen[name] = true
@@ -333,6 +339,10 @@ Use --parent to specify the parent directly. Works for both new and already-trac
 				return err
 			}
 
+			if err := requireBranch(gitRunner); err != nil {
+				return err
+			}
+
 			checkStaleness(g, gitRunner, printer)
 
 			var branchToAttach string
@@ -400,6 +410,8 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 			printer.Println("'%s' already has parent '%s'", branchToAttach, parent)
 			return nil
 		}
+
+		warnDirtyTree(gitRunner, printer)
 
 		// Create backups before any destructive operations
 		backupMgr := backup.NewManager(gitRunner, repoPath)

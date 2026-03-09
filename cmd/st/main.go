@@ -88,6 +88,7 @@ func init() {
 	rootCmd.AddCommand(prCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(graphCmd())
+	rootCmd.AddCommand(detachCmd())
 	rootCmd.AddCommand(mcpCmd())
 	rootCmd.AddCommand(modifyCmd())
 	rootCmd.AddCommand(deleteCmd())
@@ -97,6 +98,29 @@ func init() {
 	rootCmd.AddCommand(downCmd())
 	rootCmd.AddCommand(topCmd())
 	rootCmd.AddCommand(bottomCmd())
+}
+
+// requireBranch checks that HEAD is not detached. Returns an error if HEAD is detached.
+func requireBranch(gitRunner *git.Runner) error {
+	branch, err := gitRunner.GetCurrentBranch()
+	if err != nil {
+		return fmt.Errorf("HEAD is detached — check out a branch first")
+	}
+	if branch == "HEAD" {
+		return fmt.Errorf("HEAD is detached — check out a branch first")
+	}
+	return nil
+}
+
+// warnDirtyTree prints a warning if the working tree has uncommitted changes.
+func warnDirtyTree(gitRunner *git.Runner, printer *output.Printer) {
+	dirty, err := gitRunner.HasUncommittedChanges()
+	if err != nil {
+		return
+	}
+	if dirty {
+		printer.Warning("you have uncommitted changes — consider committing or stashing first")
+	}
 }
 
 // getContext loads the graph and git runner for commands

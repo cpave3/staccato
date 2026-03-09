@@ -20,6 +20,10 @@ func appendCmd() *cobra.Command {
 				return err
 			}
 
+			if err := requireBranch(git); err != nil {
+				return err
+			}
+
 			checkStaleness(g, git, printer)
 
 			parentBranch, _ := git.GetCurrentBranch()
@@ -29,6 +33,11 @@ func appendCmd() *cobra.Command {
 				if _, exists := g.GetBranch(parentBranch); !exists {
 					return fmt.Errorf("current branch '%s' is not in the stack. Run 'st attach' first", parentBranch)
 				}
+			}
+
+			// Check if branch already exists
+			if exists, _ := git.BranchExists(branchName); exists {
+				return fmt.Errorf("branch '%s' already exists — use 'st attach %s' to add it to the stack", branchName, branchName)
 			}
 
 			// Create branch

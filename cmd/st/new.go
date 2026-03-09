@@ -20,7 +20,16 @@ func newCmd() *cobra.Command {
 				return err
 			}
 
+			if err := requireBranch(git); err != nil {
+				return err
+			}
+
 			checkStaleness(g, git, printer)
+
+			// Check if branch already exists
+			if exists, _ := git.BranchExists(branchName); exists {
+				return fmt.Errorf("branch '%s' already exists — use 'st attach %s' to add it to the stack", branchName, branchName)
+			}
 
 			// Create branch from root
 			err = git.CreateAndCheckoutBranch(branchName)

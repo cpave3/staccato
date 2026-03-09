@@ -23,7 +23,13 @@ The current branch and all downstream branches will be reparented and restacked.
 				return err
 			}
 
+			if err := requireBranch(git); err != nil {
+				return err
+			}
+
 			checkStaleness(g, git, printer)
+
+			warnDirtyTree(git, printer)
 
 			currentBranch, _ := git.GetCurrentBranch()
 
@@ -83,7 +89,7 @@ The current branch and all downstream branches will be reparented and restacked.
 			if err != nil {
 				if result.Conflicts {
 					printer.ConflictDetected(result.ConflictsAt)
-					return fmt.Errorf("conflict during restack")
+					return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
 				}
 
 				// Restore backups on error

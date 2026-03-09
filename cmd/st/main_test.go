@@ -3264,3 +3264,276 @@ func TestAbort(t *testing.T) {
 		assertContains(t, out, "no rebase in progress")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// TestDetachedHEADGuard
+// ---------------------------------------------------------------------------
+
+func TestDetachedHEADGuard(t *testing.T) {
+	t.Run("log_with_detached_HEAD_returns_error", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		// Create a branch so the graph has content
+		runSt(t, "new", "feature-1")
+
+		// Detach HEAD
+		sha := repo.HeadSHA()
+		repo.RunGit("checkout", sha)
+
+		out := runStExpectError(t, "log")
+		assertContains(t, out, "HEAD is detached")
+		assertContains(t, out, "check out a branch first")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestBranchAlreadyExists
+// ---------------------------------------------------------------------------
+
+func TestBranchAlreadyExists(t *testing.T) {
+	t.Run("new_with_existing_branch_suggests_attach", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+
+		out := runStExpectError(t, "new", "feature-1")
+		assertContains(t, out, "branch 'feature-1' already exists")
+		assertContains(t, out, "st attach feature-1")
+	})
+
+	t.Run("append_with_existing_branch_suggests_attach", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+		repo.Checkout(root)
+
+		out := runStExpectError(t, "append", "feature-1")
+		assertContains(t, out, "branch 'feature-1' already exists")
+		assertContains(t, out, "st attach feature-1")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestContinueSafetyCheck
+// ---------------------------------------------------------------------------
+
+func TestContinueSafetyCheck(t *testing.T) {
+	t.Run("continue_with_manual_rebase_suggests_git_rebase_continue", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create two branches with conflicting changes
+		runSt(t, "new", "feature-1")
+		repo.CreateFile("conflict.txt", "feature-1 content")
+		repo.AddAndCommit("feature-1 commit")
+
+		repo.Checkout(root)
+		repo.CreateFile("conflict.txt", "root content")
+		repo.AddAndCommit("root commit")
+
+		// Start a manual git rebase (not via st)
+		repo.RunGit("rebase", "feature-1")
+		// This should fail with conflicts — if it doesn't, skip
+		if !rebaseInProgress(t, repo) {
+			t.Skip("manual rebase didn't produce conflicts")
+		}
+
+		// st continue should detect no restack state
+		out := runStExpectError(t, "continue")
+		assertContains(t, out, "no st restack in progress")
+		assertContains(t, out, "git rebase --continue")
+
+		// Cleanup: abort the rebase
+		repo.RunGit("rebase", "--abort")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestDirtyTreeWarning
+// ---------------------------------------------------------------------------
+
+func TestDirtyTreeWarning(t *testing.T) {
+	t.Run("restack_with_dirty_tree_warns_but_proceeds", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		// Create a branch
+		runSt(t, "new", "feature-1")
+		repo.CreateFile("feature.txt", "feature content")
+		repo.AddAndCommit("feature commit")
+
+		// Create uncommitted changes
+		repo.WriteFile("dirty.txt", "uncommitted")
+
+		// Restack should warn but succeed
+		out := runSt(t, "-v", "restack")
+		assertContains(t, out, "uncommitted changes")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestDetach
+// ---------------------------------------------------------------------------
+
+func TestDetach(t *testing.T) {
+	t.Run("detach_leaf_branch", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+
+		out := runSt(t, "detach", "feature-1")
+		assertContains(t, out, "Detached 'feature-1' from stack")
+
+		// Branch should still exist in git
+		if !repo.BranchExists("feature-1") {
+			t.Error("git branch feature-1 should still exist")
+		}
+
+		// Branch should not be in graph
+		if graphContains(t, repo, "feature-1") {
+			t.Error("feature-1 should not be in graph")
+		}
+	})
+
+	t.Run("detach_branch_with_children_reparents", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+		runSt(t, "append", "feature-2")
+		runSt(t, "append", "feature-3")
+
+		out := runSt(t, "detach", "feature-1")
+		assertContains(t, out, "Detached 'feature-1' from stack")
+		assertContains(t, out, "reparented")
+		assertContains(t, out, "st restack")
+
+		// feature-1 removed, feature-2 reparented to root
+		g := loadGraph(t, repo)
+		if _, ok := g.Branches["feature-1"]; ok {
+			t.Error("feature-1 should be removed from graph")
+		}
+		if b, ok := g.Branches["feature-2"]; !ok {
+			t.Error("feature-2 should still be in graph")
+		} else if b.Parent != root {
+			t.Errorf("feature-2 parent = %q, want %q", b.Parent, root)
+		}
+	})
+
+	t.Run("detach_root_errors", func(t *testing.T) {
+		_, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+
+		out := runStExpectError(t, "detach", root)
+		assertContains(t, out, "cannot detach the root branch")
+	})
+
+	t.Run("detach_unknown_branch_errors", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+
+		out := runStExpectError(t, "detach", "nonexistent")
+		assertContains(t, out, "not in the stack")
+	})
+
+	t.Run("detach_current_branch_no_arg", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "feature-1")
+		// feature-1 is current branch
+
+		out := runSt(t, "detach")
+		assertContains(t, out, "Detached 'feature-1' from stack")
+
+		if graphContains(t, repo, "feature-1") {
+			t.Error("feature-1 should not be in graph")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAttachFilterStacked
+// ---------------------------------------------------------------------------
+
+func TestAttachFilterStacked(t *testing.T) {
+	t.Run("recursive_attach_excludes_stacked_branches", func(t *testing.T) {
+		// Simulate the candidate-building logic from doAttachRecursively
+		// with stopIfTracked=true (recursive path)
+		g := graph.NewGraph("main")
+		g.AddBranch("feature-1", "main", "abc", "def")
+		g.AddBranch("feature-2", "feature-1", "def", "ghi")
+
+		allBranches := []string{"main", "feature-1", "feature-2", "feature-3", "feature-4"}
+		branchToAttach := "feature-3"
+		stopIfTracked := true
+
+		var candidates []attachCandidate
+		seen := make(map[string]bool)
+		for _, name := range allBranches {
+			if name == branchToAttach {
+				continue
+			}
+			if stopIfTracked && name != g.Root {
+				if _, inGraph := g.Branches[name]; inGraph {
+					continue
+				}
+			}
+			if !seen[name] {
+				seen[name] = true
+				candidates = append(candidates, attachCandidate{name: name})
+			}
+		}
+
+		// Should include: main (root), feature-4 (untracked)
+		// Should exclude: feature-1, feature-2 (tracked in graph)
+		if len(candidates) != 2 {
+			t.Fatalf("expected 2 candidates, got %d: %v", len(candidates), candidateNames(candidates))
+		}
+		names := candidateNames(candidates)
+		if names[0] != "main" {
+			t.Errorf("expected first candidate 'main', got %q", names[0])
+		}
+		if names[1] != "feature-4" {
+			t.Errorf("expected second candidate 'feature-4', got %q", names[1])
+		}
+	})
+
+	t.Run("top_level_attach_shows_all_branches", func(t *testing.T) {
+		// Simulate with stopIfTracked=false (top-level path)
+		g := graph.NewGraph("main")
+		g.AddBranch("feature-1", "main", "abc", "def")
+
+		allBranches := []string{"main", "feature-1", "feature-2"}
+		branchToAttach := "feature-2"
+		stopIfTracked := false
+
+		var candidates []attachCandidate
+		seen := make(map[string]bool)
+		for _, name := range allBranches {
+			if name == branchToAttach {
+				continue
+			}
+			if stopIfTracked && name != g.Root {
+				if _, inGraph := g.Branches[name]; inGraph {
+					continue
+				}
+			}
+			if !seen[name] {
+				seen[name] = true
+				candidates = append(candidates, attachCandidate{name: name})
+			}
+		}
+
+		// Should include all: main, feature-1 (even though tracked)
+		if len(candidates) != 2 {
+			t.Fatalf("expected 2 candidates, got %d: %v", len(candidates), candidateNames(candidates))
+		}
+	})
+}
+
+func candidateNames(candidates []attachCandidate) []string {
+	var names []string
+	for _, c := range candidates {
+		names = append(names, c.name)
+	}
+	return names
+}

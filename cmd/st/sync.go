@@ -23,6 +23,10 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				return err
 			}
 
+			if err := requireBranch(gitRunner); err != nil {
+				return err
+			}
+
 			if dryRun {
 				printer.DryRunNotice()
 			}

@@ -26,7 +26,7 @@ func continueCmd() *cobra.Command {
 			}
 
 			if !inProgress {
-				return fmt.Errorf("no rebase in progress - nothing to continue")
+				return fmt.Errorf("no rebase in progress — nothing to continue")
 			}
 
 			backupMgr := backup.NewManager(git, repoPath)
@@ -35,9 +35,11 @@ func continueCmd() *cobra.Command {
 			// Load restack state to get lineage info
 			var lineage []string
 			state, stateErr := restack.LoadRestackState(repoPath)
-			if stateErr == nil && state != nil {
-				lineage = state.Lineage
+			if stateErr != nil || state == nil {
+				// Rebase in progress but no st restack state — likely a manual rebase
+				return fmt.Errorf("no st restack in progress — did you mean 'git rebase --continue'?")
 			}
+			lineage = state.Lineage
 
 			// Continue the restack (uses lineage if available)
 			result, err := engine.Continue(g, lineage)

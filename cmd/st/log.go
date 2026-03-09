@@ -15,6 +15,10 @@ func logCmd() *cobra.Command {
 				return err
 			}
 
+			if err := requireBranch(git); err != nil {
+				return err
+			}
+
 			checkStaleness(g, git, printer)
 
 			currentBranch, _ := git.GetCurrentBranch()
