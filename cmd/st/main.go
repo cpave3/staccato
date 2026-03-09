@@ -89,6 +89,14 @@ func init() {
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(graphCmd())
 	rootCmd.AddCommand(mcpCmd())
+	rootCmd.AddCommand(modifyCmd())
+	rootCmd.AddCommand(deleteCmd())
+	rootCmd.AddCommand(moveCmd())
+	rootCmd.AddCommand(abortCmd())
+	rootCmd.AddCommand(upCmd())
+	rootCmd.AddCommand(downCmd())
+	rootCmd.AddCommand(topCmd())
+	rootCmd.AddCommand(bottomCmd())
 }
 
 // getContext loads the graph and git runner for commands
