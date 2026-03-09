@@ -12,6 +12,7 @@ import (
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/cpave3/staccato/pkg/output"
 	"github.com/cpave3/staccato/pkg/restack"
 )
 
@@ -186,7 +187,7 @@ func (a attachTUI) View() string {
 	if a.searchMode {
 		b.WriteString("\n" + lipgloss.NewStyle().Background(lipgloss.Color("#333333")).Foreground(lipgloss.Color("#FFFFFF")).Render(fmt.Sprintf("  /%s", a.searchQuery)))
 		if len(a.matches) > 0 {
-			b.WriteString(fmt.Sprintf("  [%d/%d matches]", a.matchIndex+1, len(a.matches)))
+			fmt.Fprintf(&b, "  [%d/%d matches]", a.matchIndex+1, len(a.matches))
 		}
 	}
 
@@ -197,16 +198,16 @@ func (a attachTUI) View() string {
 
 // attachInteractive launches the TUI to attach a branch, recursing up the chain as needed.
 // Unlike attachRecursively, this always shows the TUI even if the branch is already tracked.
-func attachInteractive(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string) error {
-	return doAttachRecursively(g, gitRunner, repoPath, attacher, branchToAttach, false)
+func attachInteractive(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string, printer *output.Printer) error {
+	return doAttachRecursively(g, gitRunner, repoPath, attacher, branchToAttach, false, printer)
 }
 
 // attachRecursively attaches a branch, stopping if already tracked (used for recursive parent attachment).
-func attachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string) error {
-	return doAttachRecursively(g, gitRunner, repoPath, attacher, branchToAttach, true)
+func attachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string, printer *output.Printer) error {
+	return doAttachRecursively(g, gitRunner, repoPath, attacher, branchToAttach, true, printer)
 }
 
-func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string, stopIfTracked bool) error {
+func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach string, stopIfTracked bool, printer *output.Printer) error {
 	if stopIfTracked && attacher.IsBranchInGraph(g, branchToAttach) {
 		return nil // Already attached, stop recursion
 	}
@@ -276,7 +277,7 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 			if err := saveContext(g, repoPath, gitRunner); err != nil {
 				return fmt.Errorf("failed to save graph: %w", err)
 			}
-			fmt.Printf("✔ Set '%s' as stack root\n", m.selected)
+			printer.Success("Set '%s' as stack root", m.selected)
 
 			// Now attach the branch under the new root
 			err := attacher.AttachBranch(g, branchToAttach, m.selected)
@@ -286,14 +287,14 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 			if err := saveContext(g, repoPath, gitRunner); err != nil {
 				return fmt.Errorf("failed to save graph: %w", err)
 			}
-			fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, m.selected)
+			printer.Success("Attached '%s' as child of '%s'", branchToAttach, m.selected)
 			return nil
 		}
 
 		// RECURSIVE STEP: If the selected parent isn't in the graph yet, attach it first
 		if !attacher.IsBranchInGraph(g, m.selected) && m.selected != g.Root {
-			fmt.Printf("\nParent '%s' is not yet in the stack. Attaching it first...\n", m.selected)
-			if err := attachRecursively(g, gitRunner, repoPath, attacher, m.selected); err != nil {
+			printer.Println("\nParent '%s' is not yet in the stack. Attaching it first...", m.selected)
+			if err := attachRecursively(g, gitRunner, repoPath, attacher, m.selected, printer); err != nil {
 				return fmt.Errorf("failed to attach parent '%s': %w", m.selected, err)
 			}
 		}
@@ -308,7 +309,7 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 			return fmt.Errorf("failed to save graph: %w", err)
 		}
 
-		fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, m.selected)
+		printer.Success("Attached '%s' as child of '%s'", branchToAttach, m.selected)
 	}
 
 	return nil
@@ -345,7 +346,7 @@ Use --parent to specify the parent directly. Works for both new and already-trac
 
 			// If --parent flag is set, use direct parent specification
 			if parentFlag != "" {
-				return attachWithParent(g, gitRunner, repoPath, attacher, branchToAttach, parentFlag)
+				return attachWithParent(g, gitRunner, repoPath, attacher, branchToAttach, parentFlag, printer)
 			}
 
 			// If --auto flag is set, use auto-attach mode
@@ -362,7 +363,7 @@ Use --parent to specify the parent directly. Works for both new and already-trac
 
 			// Interactive TUI mode with recursive attachment
 			// Always launch TUI — even for tracked branches (allows building/modifying stack interactively)
-			return attachInteractive(g, gitRunner, repoPath, attacher, branchToAttach)
+			return attachInteractive(g, gitRunner, repoPath, attacher, branchToAttach, printer)
 		},
 	}
 
@@ -372,7 +373,7 @@ Use --parent to specify the parent directly. Works for both new and already-trac
 	return cmd
 }
 
-func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach, parent string) error {
+func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach, parent string, printer *output.Printer) error {
 	// Validate parent exists in graph or is root
 	if parent != g.Root {
 		if _, exists := g.GetBranch(parent); !exists {
@@ -381,7 +382,7 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 				exists, err := gitRunner.BranchExists(parent)
 				if err == nil && exists {
 					g.Root = parent
-					fmt.Printf("✔ Set '%s' as stack root\n", parent)
+					printer.Success("Set '%s' as stack root", parent)
 				} else {
 					return fmt.Errorf("parent '%s' is not in the stack", parent)
 				}
@@ -396,7 +397,7 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 	if isRelocate {
 		currentParent := g.Branches[branchToAttach].Parent
 		if currentParent == parent {
-			fmt.Printf("'%s' already has parent '%s'\n", branchToAttach, parent)
+			printer.Println("'%s' already has parent '%s'", branchToAttach, parent)
 			return nil
 		}
 
@@ -447,7 +448,7 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 
 		backupMgr.CleanupStackBackups(affectedBranches)
 
-		fmt.Printf("✔ Relocated '%s' under '%s'\n", branchToAttach, parent)
+		printer.Success("Relocated '%s' under '%s'", branchToAttach, parent)
 		return nil
 	}
 
@@ -460,6 +461,6 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 		return fmt.Errorf("failed to save graph: %w", err)
 	}
 
-	fmt.Printf("✔ Attached '%s' as child of '%s'\n", branchToAttach, parent)
+	printer.Success("Attached '%s' as child of '%s'", branchToAttach, parent)
 	return nil
 }

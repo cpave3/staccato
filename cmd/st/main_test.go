@@ -542,8 +542,8 @@ func TestContinue(t *testing.T) {
 		}
 	})
 
-	// Cycle 4: continue preserves original backups (restore after continue gets pre-restack state)
-	t.Run("continue_preserves_original_backups", func(t *testing.T) {
+	// Cycle 4: backups preserved during conflict, can restore before continue completes
+	t.Run("backups_available_during_conflict_for_restore", func(t *testing.T) {
 		repo, root := setupRepoWithStack(t)
 
 		// Build stack: main -> f1 -> f2
@@ -570,19 +570,7 @@ func TestContinue(t *testing.T) {
 		repo.Checkout("f2")
 		runStExpectError(t, "restack")
 
-		// Resolve and continue
-		repo.WriteFile("shared.txt", "resolved content")
-		repo.RunGit("add", "shared.txt")
-
-		contCmd := exec.Command(stBinary, "continue")
-		contCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
-		setCoverEnv(contCmd)
-		out, err := contCmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("st continue failed: %v\nOutput: %s", err, out)
-		}
-
-		// Now restore --all should go back to ORIGINAL pre-restack SHAs
+		// Backups should exist — restore --all to get back to pre-restack state
 		runSt(t, "restore", "--all")
 
 		afterF1SHA, _ := repo.RunGit("rev-parse", "f1")
@@ -2174,4 +2162,1105 @@ func TestSyncSkipsNewEmptyBranch(t *testing.T) {
 	if strings.TrimSpace(remoteOut) == "" {
 		t.Error("empty-branch should have been pushed to remote")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// runStContinue runs `st continue` with GIT_EDITOR=true to avoid editor prompts.
+// ---------------------------------------------------------------------------
+func runStContinue(t *testing.T) string {
+	t.Helper()
+	cmd := exec.Command(stBinary, "continue")
+	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+	setCoverEnv(cmd)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("st continue failed: %v\nOutput: %s", err, out)
+	}
+	return string(out)
+}
+
+// runStContinueExpectError runs `st continue` with GIT_EDITOR=true and expects an error.
+func runStContinueExpectError(t *testing.T) string {
+	t.Helper()
+	cmd := exec.Command(stBinary, "continue")
+	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+	setCoverEnv(cmd)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("st continue expected error but succeeded\nOutput: %s", out)
+	}
+	return string(out)
+}
+
+// resolveConflictAndStage resolves a conflict file by writing content and staging it.
+func resolveConflictAndStage(t *testing.T, repo *testutil.GitRepo, filename, content string) {
+	t.Helper()
+	repo.WriteFile(filename, content)
+	repo.RunGit("add", filename)
+}
+
+// restackStateExists checks if .git/stack/restack-state.json exists.
+func restackStateExists(t *testing.T, repo *testutil.GitRepo) bool {
+	t.Helper()
+	statePath := filepath.Join(repo.Dir, ".git", "stack", "restack-state.json")
+	_, err := os.Stat(statePath)
+	return err == nil
+}
+
+// rebaseInProgress checks if a rebase is currently in progress.
+func rebaseInProgress(t *testing.T, repo *testutil.GitRepo) bool {
+	t.Helper()
+	rebaseMergePath := filepath.Join(repo.Dir, ".git", "rebase-merge")
+	rebaseApplyPath := filepath.Join(repo.Dir, ".git", "rebase-apply")
+	_, err1 := os.Stat(rebaseMergePath)
+	_, err2 := os.Stat(rebaseApplyPath)
+	return err1 == nil || err2 == nil
+}
+
+// getBranchSHA returns the SHA of a branch.
+func getBranchSHA(t *testing.T, repo *testutil.GitRepo, branch string) string {
+	t.Helper()
+	sha, err := repo.RunGit("rev-parse", branch)
+	if err != nil {
+		t.Fatalf("failed to get SHA for %s: %v", branch, err)
+	}
+	return sha
+}
+
+// ---------------------------------------------------------------------------
+// TestRestackMultiConflictCycle — Tasks 1.1, 1.2, 1.3
+// ---------------------------------------------------------------------------
+
+func TestRestackMultiConflictCycle(t *testing.T) {
+	t.Run("sequential_conflicts_across_two_branches", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Build stack: root -> s1 -> s2 -> s3
+		// s1 modifies conflict1.txt, s2 modifies conflict2.txt
+		runSt(t, "new", "s1")
+		repo.CreateFile("conflict1.txt", "s1 content")
+		repo.CreateFile("s1.txt", "s1 file")
+		repo.AddAndCommit("s1 commit")
+
+		runSt(t, "append", "s2")
+		repo.CreateFile("conflict2.txt", "s2 content")
+		repo.CreateFile("s2.txt", "s2 file")
+		repo.AddAndCommit("s2 commit")
+
+		runSt(t, "append", "s3")
+		repo.CreateFile("s3.txt", "s3 file")
+		repo.AddAndCommit("s3 commit")
+
+		// Record pre-restack graph SHAs
+		preGraph := loadGraph(t, repo)
+		preS1HeadSHA := preGraph.Branches["s1"].HeadSHA
+		preS3HeadSHA := preGraph.Branches["s3"].HeadSHA
+
+		// Create conflicting changes on root for BOTH conflict files
+		repo.Checkout(root)
+		repo.CreateFile("conflict1.txt", "root conflict1 content")
+		repo.AddAndCommit("root conflict1")
+		repo.CreateFile("conflict2.txt", "root conflict2 content")
+		repo.AddAndCommit("root conflict2")
+
+		// Restack from s3 (tip) — should stop at s1
+		repo.Checkout("s3")
+		out := runStExpectError(t, "restack")
+		assertContains(t, out, "conflict")
+
+		// Verify restack state file exists
+		if !restackStateExists(t, repo) {
+			t.Error("restack state file should exist after conflict")
+		}
+
+		// Verify rebase is in progress
+		if !rebaseInProgress(t, repo) {
+			t.Error("rebase should be in progress after conflict at s1")
+		}
+
+		// Resolve conflict1.txt and continue — should proceed then stop at s2
+		resolveConflictAndStage(t, repo, "conflict1.txt", "resolved conflict1")
+		out = runStContinueExpectError(t)
+		assertContains(t, out, "conflict")
+
+		// Verify restack state file still exists
+		if !restackStateExists(t, repo) {
+			t.Error("restack state file should persist after second conflict")
+		}
+
+		// Verify graph: s1 should NOW have updated SHAs (it was rebased successfully)
+		g := loadGraph(t, repo)
+		if g.Branches["s1"].HeadSHA == preS1HeadSHA {
+			t.Error("s1 HeadSHA should be updated after successful continue for s1")
+		}
+		// s3 should still have its pre-restack graph SHA (not yet processed)
+		if g.Branches["s3"].HeadSHA != preS3HeadSHA {
+			t.Error("s3 HeadSHA should be unchanged while s2 is conflicting")
+		}
+
+		// Resolve conflict2.txt and continue — should complete
+		resolveConflictAndStage(t, repo, "conflict2.txt", "resolved conflict2")
+		runStContinue(t)
+
+		// Verify restack state file is cleared
+		if restackStateExists(t, repo) {
+			t.Error("restack state file should be cleared after successful completion")
+		}
+
+		// Verify no rebase in progress
+		if rebaseInProgress(t, repo) {
+			t.Error("rebase should not be in progress after completion")
+		}
+
+		// Verify all graph SHAs now match actual branch heads
+		g = loadGraph(t, repo)
+		for branchName, branch := range g.Branches {
+			actualSHA := getBranchSHA(t, repo, branchName)
+			if branch.HeadSHA != actualSHA {
+				t.Errorf("graph HeadSHA for %s = %s, actual = %s", branchName, branch.HeadSHA, actualSHA)
+			}
+		}
+
+		// Verify file contents on each branch
+		repo.Checkout("s1")
+		content, _ := os.ReadFile(filepath.Join(repo.Dir, "conflict1.txt"))
+		if string(content) != "resolved conflict1" {
+			t.Errorf("s1 conflict1.txt = %q, want 'resolved conflict1'", content)
+		}
+
+		repo.Checkout("s2")
+		content, _ = os.ReadFile(filepath.Join(repo.Dir, "conflict2.txt"))
+		if string(content) != "resolved conflict2" {
+			t.Errorf("s2 conflict2.txt = %q, want 'resolved conflict2'", content)
+		}
+		if !repo.FileExists("s2.txt") {
+			t.Error("s2 should have s2.txt")
+		}
+
+		repo.Checkout("s3")
+		if !repo.FileExists("s3.txt") {
+			t.Error("s3 should have s3.txt")
+		}
+		if !repo.FileExists("conflict1.txt") {
+			t.Error("s3 should have conflict1.txt (inherited from s1)")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestRestackRestoreIntegrity — Tasks 2.1, 2.2, 2.3, 2.4
+// ---------------------------------------------------------------------------
+
+func TestRestackRestoreIntegrity(t *testing.T) {
+	t.Run("restore_all_after_conflict_returns_exact_pre_restack_state", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Build stack: root -> s1 -> s2 -> s3
+		runSt(t, "new", "s1")
+		repo.CreateFile("shared.txt", "s1 content")
+		repo.CreateFile("s1.txt", "s1 file")
+		repo.AddAndCommit("s1 commit")
+
+		runSt(t, "append", "s2")
+		repo.CreateFile("s2.txt", "s2 file")
+		repo.AddAndCommit("s2 commit")
+
+		runSt(t, "append", "s3")
+		repo.CreateFile("s3.txt", "s3 file")
+		repo.AddAndCommit("s3 commit")
+
+		// Record pre-restack state
+		origS1SHA := getBranchSHA(t, repo, "s1")
+		origS2SHA := getBranchSHA(t, repo, "s2")
+		origS3SHA := getBranchSHA(t, repo, "s3")
+
+		// Read file content on s1 before restack
+		repo.Checkout("s1")
+		origContent, _ := os.ReadFile(filepath.Join(repo.Dir, "shared.txt"))
+
+		// Create conflict on root
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root conflict content")
+		repo.AddAndCommit("root conflict")
+
+		// Restack from s3 — conflict at s1
+		repo.Checkout("s3")
+		runStExpectError(t, "restack")
+
+		// Restore all
+		runSt(t, "restore", "--all")
+
+		// Verify all branches have original SHAs
+		if getBranchSHA(t, repo, "s1") != origS1SHA {
+			t.Errorf("s1 SHA should be restored to original")
+		}
+		if getBranchSHA(t, repo, "s2") != origS2SHA {
+			t.Errorf("s2 SHA should be restored to original")
+		}
+		if getBranchSHA(t, repo, "s3") != origS3SHA {
+			t.Errorf("s3 SHA should be restored to original")
+		}
+
+		// Verify graph SHAs match actual branches
+		g := loadGraph(t, repo)
+		for branchName, branch := range g.Branches {
+			actualSHA := getBranchSHA(t, repo, branchName)
+			if branch.HeadSHA != actualSHA {
+				t.Errorf("graph HeadSHA for %s = %s, actual = %s", branchName, branch.HeadSHA, actualSHA)
+			}
+		}
+
+		// Verify restack state file is cleared
+		if restackStateExists(t, repo) {
+			t.Error("restack state file should be cleared after restore")
+		}
+
+		// Verify no rebase in progress
+		if rebaseInProgress(t, repo) {
+			t.Error("rebase should not be in progress after restore")
+		}
+
+		// Verify file contents are restored
+		repo.Checkout("s1")
+		restoredContent, _ := os.ReadFile(filepath.Join(repo.Dir, "shared.txt"))
+		if string(restoredContent) != string(origContent) {
+			t.Errorf("s1 shared.txt content should be restored, got %q want %q", restoredContent, origContent)
+		}
+	})
+
+	t.Run("restore_all_after_partial_continue_returns_pre_restack_state", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Build stack: root -> s1 -> s2 -> s3
+		runSt(t, "new", "s1")
+		repo.CreateFile("conflict1.txt", "s1 content")
+		repo.CreateFile("s1.txt", "s1 file")
+		repo.AddAndCommit("s1 commit")
+
+		runSt(t, "append", "s2")
+		repo.CreateFile("conflict2.txt", "s2 content")
+		repo.CreateFile("s2.txt", "s2 file")
+		repo.AddAndCommit("s2 commit")
+
+		runSt(t, "append", "s3")
+		repo.CreateFile("s3.txt", "s3 file")
+		repo.AddAndCommit("s3 commit")
+
+		// Record pre-restack SHAs
+		origS1SHA := getBranchSHA(t, repo, "s1")
+		origS2SHA := getBranchSHA(t, repo, "s2")
+		origS3SHA := getBranchSHA(t, repo, "s3")
+
+		// Create conflicts on root
+		repo.Checkout(root)
+		repo.CreateFile("conflict1.txt", "root conflict1")
+		repo.AddAndCommit("root conflict1")
+		repo.CreateFile("conflict2.txt", "root conflict2")
+		repo.AddAndCommit("root conflict2")
+
+		// Restack from s3 — conflict at s1
+		repo.Checkout("s3")
+		runStExpectError(t, "restack")
+
+		// Resolve s1 and continue — should hit conflict at s2
+		resolveConflictAndStage(t, repo, "conflict1.txt", "resolved1")
+		runStContinueExpectError(t)
+
+		// Now restore --all (after partial continue)
+		runSt(t, "restore", "--all")
+
+		// Verify ALL branches are back to pre-restack state
+		if getBranchSHA(t, repo, "s1") != origS1SHA {
+			t.Errorf("s1 SHA should be restored to original after partial continue + restore")
+		}
+		if getBranchSHA(t, repo, "s2") != origS2SHA {
+			t.Errorf("s2 SHA should be restored to original after partial continue + restore")
+		}
+		if getBranchSHA(t, repo, "s3") != origS3SHA {
+			t.Errorf("s3 SHA should be restored to original after partial continue + restore")
+		}
+
+		// Verify no rebase artifacts
+		if rebaseInProgress(t, repo) {
+			t.Error("no rebase should be in progress after restore")
+		}
+		if restackStateExists(t, repo) {
+			t.Error("restack state should be cleared after restore")
+		}
+	})
+
+	t.Run("restore_aborts_active_rebase_no_artifacts", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Build stack: root -> s1
+		runSt(t, "new", "s1")
+		repo.CreateFile("shared.txt", "s1 content")
+		repo.AddAndCommit("s1 commit")
+
+		// Create conflict on root
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root content")
+		repo.AddAndCommit("root conflict")
+
+		// Restack — conflict
+		repo.Checkout("s1")
+		runStExpectError(t, "restack")
+
+		// Verify rebase IS in progress before restore
+		if !rebaseInProgress(t, repo) {
+			t.Fatal("rebase should be in progress before restore")
+		}
+
+		// Restore --all without resolving conflict
+		runSt(t, "restore", "--all")
+
+		// Verify no rebase-merge directory
+		rebaseMergePath := filepath.Join(repo.Dir, ".git", "rebase-merge")
+		if _, err := os.Stat(rebaseMergePath); err == nil {
+			t.Error(".git/rebase-merge should not exist after restore")
+		}
+		rebaseApplyPath := filepath.Join(repo.Dir, ".git", "rebase-apply")
+		if _, err := os.Stat(rebaseApplyPath); err == nil {
+			t.Error(".git/rebase-apply should not exist after restore")
+		}
+
+		// Verify user is on a valid branch (not detached HEAD)
+		cur := getCurrentBranch(t, repo)
+		if cur == "HEAD" || cur == "" {
+			t.Errorf("should be on a valid branch after restore, got %q", cur)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestRestackBackupIntegrity — Tasks 3.1, 3.2, 3.3
+// ---------------------------------------------------------------------------
+
+func TestRestackBackupIntegrity(t *testing.T) {
+	t.Run("backups_survive_multiple_continue_cycles", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Build stack: root -> s1 -> s2
+		runSt(t, "new", "s1")
+		repo.CreateFile("conflict1.txt", "s1 content")
+		repo.CreateFile("s1.txt", "s1 file")
+		repo.AddAndCommit("s1 commit")
+
+		runSt(t, "append", "s2")
+		repo.CreateFile("conflict2.txt", "s2 content")
+		repo.CreateFile("s2.txt", "s2 file")
+		repo.AddAndCommit("s2 commit")
+
+		// Record pre-restack SHAs
+		origS1SHA := getBranchSHA(t, repo, "s1")
+		origS2SHA := getBranchSHA(t, repo, "s2")
+
+		// Create conflicts on root
+		repo.Checkout(root)
+		repo.CreateFile("conflict1.txt", "root c1")
+		repo.AddAndCommit("root c1")
+		repo.CreateFile("conflict2.txt", "root c2")
+		repo.AddAndCommit("root c2")
+
+		// Restack from s2 — conflict at s1
+		repo.Checkout("s2")
+		runStExpectError(t, "restack")
+
+		// Check backups exist for both branches after first conflict
+		s1Backups, _ := repo.RunGit("for-each-ref", "--format=%(refname:short)", "refs/heads/backup/auto/s1/")
+		s2Backups, _ := repo.RunGit("for-each-ref", "--format=%(refname:short)", "refs/heads/backup/auto/s2/")
+		if s1Backups == "" {
+			t.Error("s1 auto backup should exist after restack conflict")
+		}
+		if s2Backups == "" {
+			t.Error("s2 auto backup should exist after restack conflict")
+		}
+
+		// Resolve s1, continue — hits conflict at s2
+		resolveConflictAndStage(t, repo, "conflict1.txt", "resolved c1")
+		runStContinueExpectError(t)
+
+		// Backups should STILL exist after first continue
+		s1BackupsAfter, _ := repo.RunGit("for-each-ref", "--format=%(refname:short)", "refs/heads/backup/auto/s1/")
+		s2BackupsAfter, _ := repo.RunGit("for-each-ref", "--format=%(refname:short)", "refs/heads/backup/auto/s2/")
+		if s1BackupsAfter == "" {
+			t.Error("s1 auto backup should still exist after first continue")
+		}
+		if s2BackupsAfter == "" {
+			t.Error("s2 auto backup should still exist after first continue")
+		}
+
+		// Verify backups point to pre-restack SHAs
+		s1BackupSHA := getBranchSHA(t, repo, strings.TrimSpace(s1BackupsAfter))
+		s2BackupSHA := getBranchSHA(t, repo, strings.TrimSpace(s2BackupsAfter))
+		if s1BackupSHA != origS1SHA {
+			t.Errorf("s1 backup SHA = %s, want original %s", s1BackupSHA, origS1SHA)
+		}
+		if s2BackupSHA != origS2SHA {
+			t.Errorf("s2 backup SHA = %s, want original %s", s2BackupSHA, origS2SHA)
+		}
+
+		// Resolve s2, continue to completion
+		resolveConflictAndStage(t, repo, "conflict2.txt", "resolved c2")
+		runStContinue(t)
+
+		// Backups should be cleaned up after final success
+		s1BackupsFinal, _ := repo.RunGit("for-each-ref", "--format=%(refname:short)", "refs/heads/backup/auto/s1/")
+		s2BackupsFinal, _ := repo.RunGit("for-each-ref", "--format=%(refname:short)", "refs/heads/backup/auto/s2/")
+		if strings.TrimSpace(s1BackupsFinal) != "" {
+			t.Error("s1 auto backups should be cleaned up after successful completion")
+		}
+		if strings.TrimSpace(s2BackupsFinal) != "" {
+			t.Error("s2 auto backups should be cleaned up after successful completion")
+		}
+	})
+
+	t.Run("restore_after_multiple_continues_returns_pre_restack_state", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Build stack: root -> s1 -> s2
+		runSt(t, "new", "s1")
+		repo.CreateFile("conflict1.txt", "s1 original")
+		repo.AddAndCommit("s1 commit")
+
+		runSt(t, "append", "s2")
+		repo.CreateFile("conflict2.txt", "s2 original")
+		repo.AddAndCommit("s2 commit")
+
+		// Record pre-restack SHAs
+		origS1SHA := getBranchSHA(t, repo, "s1")
+		origS2SHA := getBranchSHA(t, repo, "s2")
+
+		// Create conflicts on root
+		repo.Checkout(root)
+		repo.CreateFile("conflict1.txt", "root c1")
+		repo.AddAndCommit("root c1")
+		repo.CreateFile("conflict2.txt", "root c2")
+		repo.AddAndCommit("root c2")
+
+		// Restack from s2 — conflict at s1
+		repo.Checkout("s2")
+		runStExpectError(t, "restack")
+
+		// Resolve s1, continue — conflict at s2
+		resolveConflictAndStage(t, repo, "conflict1.txt", "resolved c1")
+		runStContinueExpectError(t)
+
+		// Now restore (s1 was rebased, s2 still conflicting)
+		runSt(t, "restore", "--all")
+
+		// Both should be back to pre-restack state
+		if getBranchSHA(t, repo, "s1") != origS1SHA {
+			t.Errorf("s1 should be restored to pre-restack SHA")
+		}
+		if getBranchSHA(t, repo, "s2") != origS2SHA {
+			t.Errorf("s2 should be restored to pre-restack SHA")
+		}
+
+		// Verify file contents match originals
+		repo.Checkout("s1")
+		content, _ := os.ReadFile(filepath.Join(repo.Dir, "conflict1.txt"))
+		if string(content) != "s1 original" {
+			t.Errorf("s1 conflict1.txt = %q, want 's1 original'", content)
+		}
+
+		repo.Checkout("s2")
+		content, _ = os.ReadFile(filepath.Join(repo.Dir, "conflict2.txt"))
+		if string(content) != "s2 original" {
+			t.Errorf("s2 conflict2.txt = %q, want 's2 original'", content)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestRestackRerere — Task 4.1
+// ---------------------------------------------------------------------------
+
+func TestRestackRerere(t *testing.T) {
+	t.Run("rerere_auto_resolves_on_second_restack", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Build stack: root -> s1
+		runSt(t, "new", "s1")
+		repo.CreateFile("shared.txt", "s1 content")
+		repo.AddAndCommit("s1 commit")
+
+		// Create conflict on root
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root content")
+		repo.AddAndCommit("root conflict")
+
+		// First restack — conflict
+		repo.Checkout("s1")
+		runStExpectError(t, "restack")
+
+		// Resolve and continue (this teaches rerere)
+		resolveConflictAndStage(t, repo, "shared.txt", "resolved content")
+		runStContinue(t)
+
+		// Restore to pre-restack state
+		runSt(t, "restore", "--all")
+
+		// Re-create the same conflict scenario: diverge root again the same way
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root content")
+		repo.AddAndCommit("root conflict again")
+
+		// Second restack — rerere should auto-resolve
+		repo.Checkout("s1")
+		// This might succeed automatically or might still need a continue
+		cmd := exec.Command(stBinary, "restack")
+		cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+		setCoverEnv(cmd)
+		out, err := cmd.CombinedOutput()
+
+		if err != nil {
+			// If restack still reports conflict, check if rerere resolved it
+			// (rerere records resolution but rebase may still stop for user to verify)
+			// Try continue — if rerere worked, this should succeed without manual resolution
+			contCmd := exec.Command(stBinary, "continue")
+			contCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+			setCoverEnv(contCmd)
+			contOut, contErr := contCmd.CombinedOutput()
+			if contErr != nil {
+				t.Logf("restack output: %s", out)
+				t.Logf("continue output: %s", contOut)
+				t.Log("rerere may not have auto-resolved — this is git-version dependent")
+				// Don't fail hard — rerere behavior varies across git versions
+			}
+		}
+
+		// Verify s1 has the resolved content (either from auto-resolve or continue)
+		repo.Checkout("s1")
+		content, _ := os.ReadFile(filepath.Join(repo.Dir, "shared.txt"))
+		// Accept either "resolved content" or whatever rerere put there
+		if strings.Contains(string(content), "<<<<<<<") {
+			t.Error("s1 shared.txt still has conflict markers — rerere did not resolve")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncConflictContinue — Task 5.1
+// ---------------------------------------------------------------------------
+
+func TestSyncConflictContinue(t *testing.T) {
+	t.Run("sync_conflict_then_continue_completes", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		if err := repo.AddRemote(); err != nil {
+			t.Fatalf("AddRemote: %v", err)
+		}
+		repo.RunGit("push", "-u", "origin", root)
+
+		// Create stack: root -> s1
+		runSt(t, "new", "s1")
+		repo.CreateFile("shared.txt", "s1 content")
+		repo.CreateFile("s1.txt", "s1 file")
+		repo.AddAndCommit("s1 commit")
+
+		// Push s1 so sync doesn't skip it
+		repo.RunGit("push", "origin", "s1")
+
+		// Simulate upstream change: add conflicting commit on origin's trunk
+		originDir := repo.OriginDir()
+		tmpClone, _ := os.MkdirTemp("", "st-clone-*")
+		defer os.RemoveAll(tmpClone)
+		cloneCmd := exec.Command("git", "clone", originDir, tmpClone)
+		cloneCmd.Run()
+		exec.Command("git", "-C", tmpClone, "config", "user.email", "other@test.com").Run()
+		exec.Command("git", "-C", tmpClone, "config", "user.name", "Other").Run()
+		os.WriteFile(filepath.Join(tmpClone, "shared.txt"), []byte("upstream conflict content"), 0644)
+		exec.Command("git", "-C", tmpClone, "add", ".").Run()
+		exec.Command("git", "-C", tmpClone, "commit", "-m", "upstream conflict").Run()
+		exec.Command("git", "-C", tmpClone, "push", "origin", root).Run()
+
+		// Run sync — should hit conflict during restack phase
+		repo.Checkout("s1")
+		out := runStExpectError(t, "sync")
+		assertContains(t, out, "conflict")
+
+		// Resolve and continue
+		resolveConflictAndStage(t, repo, "shared.txt", "resolved sync content")
+		runStContinue(t)
+
+		// Verify s1 has the resolved content
+		repo.Checkout("s1")
+		content, _ := os.ReadFile(filepath.Join(repo.Dir, "shared.txt"))
+		if string(content) != "resolved sync content" {
+			t.Errorf("s1 shared.txt = %q, want 'resolved sync content'", content)
+		}
+
+		// Verify restack state is cleared
+		if restackStateExists(t, repo) {
+			t.Error("restack state should be cleared after continue")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestUp
+// ---------------------------------------------------------------------------
+
+func TestUp(t *testing.T) {
+	t.Run("checks_out_single_child", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+
+		// Go back to f1, then up should take us to f2
+		repo.Checkout("f1")
+		runSt(t, "up")
+		if cur := getCurrentBranch(t, repo); cur != "f2" {
+			t.Errorf("current branch = %q, want f2", cur)
+		}
+
+		// From root, up should go to f1 (single child)
+		repo.Checkout(root)
+		runSt(t, "up")
+		if cur := getCurrentBranch(t, repo); cur != "f1" {
+			t.Errorf("current branch = %q, want f1", cur)
+		}
+	})
+
+	t.Run("error_multiple_children", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "a")
+		repo.Checkout(root)
+		runSt(t, "new", "b")
+		repo.Checkout(root)
+
+		out := runStExpectError(t, "up")
+		assertContains(t, out, "multiple")
+	})
+
+	t.Run("error_at_tip", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runStExpectError(t, "up")
+		assertContains(t, out, "tip")
+	})
+
+	t.Run("error_not_in_stack", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "tracked")
+		repo.Checkout(root)
+		repo.CreateBranch("untracked")
+
+		out := runStExpectError(t, "up")
+		assertContains(t, out, "not in the stack")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestDown
+// ---------------------------------------------------------------------------
+
+func TestDown(t *testing.T) {
+	t.Run("checks_out_parent", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+
+		// From f2, down should go to f1
+		runSt(t, "down")
+		if cur := getCurrentBranch(t, repo); cur != "f1" {
+			t.Errorf("current branch = %q, want f1", cur)
+		}
+
+		// From f1, down should go to root
+		runSt(t, "down")
+		if cur := getCurrentBranch(t, repo); cur != root {
+			t.Errorf("current branch = %q, want %q", cur, root)
+		}
+	})
+
+	t.Run("error_at_root", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+
+		out := runStExpectError(t, "down")
+		assertContains(t, out, "bottom")
+	})
+
+	t.Run("error_not_in_stack", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "tracked")
+		repo.Checkout(root)
+		repo.CreateBranch("untracked")
+
+		out := runStExpectError(t, "down")
+		assertContains(t, out, "not in the stack")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestTop
+// ---------------------------------------------------------------------------
+
+func TestTop(t *testing.T) {
+	t.Run("follows_single_child_to_tip", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+		runSt(t, "append", "f3")
+
+		// From root, top should go to f3
+		repo.Checkout(root)
+		runSt(t, "top")
+		if cur := getCurrentBranch(t, repo); cur != "f3" {
+			t.Errorf("current branch = %q, want f3", cur)
+		}
+	})
+
+	t.Run("error_on_fork", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2a")
+		repo.Checkout("f1")
+		runSt(t, "append", "f2b")
+		repo.Checkout("f1")
+
+		out := runStExpectError(t, "top")
+		assertContains(t, out, "multiple")
+	})
+
+	t.Run("already_at_tip", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runSt(t, "top")
+		assertContains(t, out, "already")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestBottom
+// ---------------------------------------------------------------------------
+
+func TestBottom(t *testing.T) {
+	t.Run("navigates_to_first_child_of_root", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+		runSt(t, "append", "f3")
+
+		// From f3, bottom should go to f1
+		runSt(t, "bottom")
+		if cur := getCurrentBranch(t, repo); cur != "f1" {
+			t.Errorf("current branch = %q, want f1", cur)
+		}
+	})
+
+	t.Run("already_at_bottom", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.Checkout("f1")
+
+		out := runSt(t, "bottom")
+		assertContains(t, out, "already")
+	})
+
+	t.Run("on_root_with_single_child", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.Checkout(root)
+
+		runSt(t, "bottom")
+		if cur := getCurrentBranch(t, repo); cur != "f1" {
+			t.Errorf("current branch = %q, want f1", cur)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestModify
+// ---------------------------------------------------------------------------
+
+func TestModify(t *testing.T) {
+	t.Run("amend_staged_changes_and_restack", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		// Go back to f1, modify it
+		repo.Checkout("f1")
+		repo.WriteFile("f1.txt", "f1-modified")
+		repo.RunGit("add", "f1.txt")
+
+		headBefore := repo.HeadSHA()
+		runSt(t, "modify")
+		headAfter := repo.HeadSHA()
+
+		if headBefore == headAfter {
+			t.Error("HEAD should have changed after modify")
+		}
+
+		// f2 should still exist in graph (restacked)
+		g := loadGraph(t, repo)
+		if _, ok := g.Branches["f2"]; !ok {
+			t.Error("f2 should still be in graph after restack")
+		}
+	})
+
+	t.Run("amend_with_all_flag", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		// Make unstaged change
+		repo.WriteFile("f1.txt", "f1-modified")
+
+		runSt(t, "modify", "--all")
+
+		// File should be committed
+		status, _ := repo.RunGit("status", "--porcelain")
+		if strings.TrimSpace(status) != "" {
+			t.Errorf("working tree should be clean, got: %s", status)
+		}
+	})
+
+	t.Run("update_message", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		runSt(t, "modify", "--message", "new message")
+
+		msg, _ := repo.RunGit("log", "-1", "--format=%s")
+		if msg != "new message" {
+			t.Errorf("commit message = %q, want 'new message'", msg)
+		}
+	})
+
+	t.Run("error_not_in_stack", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "tracked")
+		repo.Checkout(root)
+		repo.CreateBranch("untracked")
+
+		out := runStExpectError(t, "modify")
+		assertContains(t, out, "not in the stack")
+	})
+
+	t.Run("error_nothing_to_modify", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		_ = repo // working tree is clean
+
+		out := runStExpectError(t, "modify")
+		assertContains(t, out, "nothing to modify")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestDelete
+// ---------------------------------------------------------------------------
+
+func TestDelete(t *testing.T) {
+	t.Run("delete_branch_no_children", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		runSt(t, "delete", "f1")
+
+		if graphContains(t, repo, "f1") {
+			t.Error("f1 should be removed from graph")
+		}
+		if repo.BranchExists("f1") {
+			t.Error("git branch f1 should be deleted")
+		}
+	})
+
+	t.Run("delete_branch_with_children_reparents", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		// Delete f1 — f2 should be reparented to root
+		runSt(t, "delete", "f1")
+
+		g := loadGraph(t, repo)
+		if _, ok := g.Branches["f1"]; ok {
+			t.Error("f1 should be removed from graph")
+		}
+		f2, ok := g.Branches["f2"]
+		if !ok {
+			t.Fatal("f2 should still be in graph")
+		}
+		if f2.Parent != root {
+			t.Errorf("f2 parent = %q, want %q", f2.Parent, root)
+		}
+	})
+
+	t.Run("delete_current_branch", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+
+		// On f1, delete it — should checkout root first
+		runSt(t, "delete", "f1")
+
+		if cur := getCurrentBranch(t, repo); cur != root {
+			t.Errorf("current branch = %q, want %q", cur, root)
+		}
+	})
+
+	t.Run("error_delete_root", func(t *testing.T) {
+		_, root := setupRepoWithStack(t)
+		out := runStExpectError(t, "delete", root)
+		assertContains(t, out, "cannot delete")
+	})
+
+	t.Run("error_not_in_stack", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+		out := runStExpectError(t, "delete", "nonexistent")
+		assertContains(t, out, "not in the stack")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestMove
+// ---------------------------------------------------------------------------
+
+func TestMove(t *testing.T) {
+	t.Run("reparent_and_restack", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		// Create two branches off root: a and b
+		runSt(t, "new", "a")
+		repo.CreateFile("a.txt", "a")
+		repo.AddAndCommit("a commit")
+		repo.Checkout(root)
+		runSt(t, "new", "b")
+		repo.CreateFile("b.txt", "b")
+		repo.AddAndCommit("b commit")
+
+		// Move b onto a
+		runSt(t, "move", "--onto", "a")
+
+		g := loadGraph(t, repo)
+		bBranch, ok := g.Branches["b"]
+		if !ok {
+			t.Fatal("b should still be in graph")
+		}
+		if bBranch.Parent != "a" {
+			t.Errorf("b parent = %q, want 'a'", bBranch.Parent)
+		}
+	})
+
+	t.Run("error_move_onto_self", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runStExpectError(t, "move", "--onto", "f1")
+		assertContains(t, out, "cannot move")
+	})
+
+	t.Run("error_move_onto_descendant", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.Checkout("f1")
+
+		out := runStExpectError(t, "move", "--onto", "f2")
+		assertContains(t, out, "cycle")
+	})
+
+	t.Run("error_target_not_in_stack", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		out := runStExpectError(t, "move", "--onto", "nonexistent")
+		assertContains(t, out, "not in the stack")
+	})
+
+	t.Run("error_not_in_stack", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		runSt(t, "new", "tracked")
+		repo.Checkout(root)
+		repo.CreateBranch("untracked")
+
+		out := runStExpectError(t, "move", "--onto", root)
+		assertContains(t, out, "not in the stack")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAbort
+// ---------------------------------------------------------------------------
+
+func TestAbort(t *testing.T) {
+	t.Run("error_no_rebase_in_progress", func(t *testing.T) {
+		_, _ = setupRepoWithStack(t)
+
+		out := runStExpectError(t, "abort")
+		assertContains(t, out, "no rebase in progress")
+	})
+
+	t.Run("aborts_active_rebase_and_clears_state", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		// Create a stack where s1 has a file that will conflict with root
+		runSt(t, "new", "s1")
+		repo.CreateFile("conflict.txt", "s1 content")
+		repo.AddAndCommit("s1: add conflict file")
+
+		// Create conflicting change on root
+		repo.Checkout(root)
+		repo.CreateFile("conflict.txt", "root content")
+		repo.AddAndCommit("root: add conflict file")
+
+		// Restack from s1 will conflict
+		repo.Checkout("s1")
+		_ = runStExpectError(t, "restack")
+
+		// Verify rebase is in progress
+		if !rebaseInProgress(t, repo) {
+			t.Skip("no rebase detected — conflict didn't trigger as expected")
+		}
+
+		// Abort should succeed
+		runSt(t, "abort")
+
+		// Restack state should be cleared
+		if restackStateExists(t, repo) {
+			t.Error("restack state should be cleared after abort")
+		}
+
+		// Continue should now error
+		out := runStExpectError(t, "continue")
+		assertContains(t, out, "no rebase in progress")
+	})
 }

@@ -53,8 +53,11 @@ func continueCmd() *cobra.Command {
 				return err
 			}
 
-			// Clean up restack state on success
+			// Clean up restack state and backups on success
 			restack.ClearRestackState(repoPath)
+			if lineage != nil {
+				backupMgr.CleanupStackBackups(lineage)
+			}
 
 			printer.RestackComplete(len(result.Completed))
 

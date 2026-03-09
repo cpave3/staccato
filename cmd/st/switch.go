@@ -172,7 +172,7 @@ func (s switchTUI) View() string {
 	if s.searchMode {
 		b.WriteString("\n" + searchStyle.Render(fmt.Sprintf("  /%s", s.searchQuery)))
 		if len(s.matches) > 0 {
-			b.WriteString(fmt.Sprintf("  [%d/%d matches]", s.matchIndex+1, len(s.matches)))
+			fmt.Fprintf(&b, "  [%d/%d matches]", s.matchIndex+1, len(s.matches))
 		}
 	} else {
 		b.WriteString("\n")
