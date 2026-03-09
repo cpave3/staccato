@@ -12,6 +12,9 @@ import (
 //go:embed prompts/split-monolithic-pr.md
 var splitPromptTemplate string
 
+//go:embed prompts/learn-staccato.md
+var learnPromptContent string
+
 func registerPrompts(s *server.MCPServer) {
 	// Register as a prompt (with template arguments)
 	s.AddPrompt(
@@ -41,6 +44,40 @@ func registerPrompts(s *server.MCPServer) {
 				Description: "Guide for splitting a large PR into focused, stacked commits/branches.",
 				Messages: []mcp.PromptMessage{
 					mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(rendered)),
+				},
+			}, nil
+		},
+	)
+
+	// Register learn-staccato prompt
+	s.AddPrompt(
+		mcp.NewPrompt("learn-staccato",
+			mcp.WithPromptDescription("Comprehensive guide to using Staccato for Git stack management. Learn commands, workflows, and best practices."),
+		),
+		func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{
+				Description: "Comprehensive guide to using Staccato for Git stack management.",
+				Messages: []mcp.PromptMessage{
+					mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(learnPromptContent)),
+				},
+			}, nil
+		},
+	)
+
+	// Register learn-staccato as a resource
+	s.AddResource(
+		mcp.NewResource(
+			"staccato://prompts/learn-staccato",
+			"learn-staccato",
+			mcp.WithResourceDescription("Comprehensive guide to using Staccato for Git stack management."),
+			mcp.WithMIMEType("text/markdown"),
+		),
+		func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return []mcp.ResourceContents{
+				mcp.TextResourceContents{
+					URI:      "staccato://prompts/learn-staccato",
+					MIMEType: "text/markdown",
+					Text:     learnPromptContent,
 				},
 			}, nil
 		},

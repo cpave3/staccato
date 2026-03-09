@@ -23,6 +23,7 @@ func NewServer(sc *stcontext.StaccatoContext) *server.MCPServer {
 	registerBranchTools(s, sc)
 	registerManagementTools(s, sc)
 	registerSyncTools(s, sc)
+	registerRunTool(s, sc)
 	registerPrompts(s)
 
 	return s

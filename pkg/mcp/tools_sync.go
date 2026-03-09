@@ -58,20 +58,60 @@ func registerSyncTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 	// st_pr
 	s.AddTool(
 		mcp.NewTool("st_pr",
-			mcp.WithDescription("Push the current branch and return info for PR creation."),
+			mcp.WithDescription("Push the current branch and return info for PR creation. With stack=true, pushes and returns info for all branches in the lineage."),
 			mcp.WithToolAnnotation(mutating()),
+			mcp.WithBoolean("stack", mcp.Description("Push and return PR info for all branches in the current lineage")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			stack := req.GetBool("stack", false)
+
 			currentBranch, err := sc.Git.GetCurrentBranch()
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
-			branchInfo, exists := sc.Graph.GetBranch(currentBranch)
-			if !exists {
+			if _, exists := sc.Graph.GetBranch(currentBranch); !exists {
 				return mcp.NewToolResultError(fmt.Sprintf("branch '%s' is not in the stack", currentBranch)), nil
 			}
 
+			remoteURL, _ := sc.Git.GetRemoteURL("origin")
+
+			if stack {
+				// Get ancestors from root to current branch
+				var lineage []string
+				at := currentBranch
+				for at != "" && at != sc.Graph.Root {
+					lineage = append([]string{at}, lineage...)
+					if b, exists := sc.Graph.GetBranch(at); exists {
+						at = b.Parent
+					} else {
+						break
+					}
+				}
+
+				var results []map[string]any
+				for _, branch := range lineage {
+					branchInfo, _ := sc.Graph.GetBranch(branch)
+					pushed := false
+					if !sc.Git.RemoteBranchExists(branch) {
+						if err := sc.Git.Push(branch, false); err != nil {
+							return mcp.NewToolResultError(fmt.Sprintf("failed to push '%s': %v", branch, err)), nil
+						}
+						pushed = true
+					}
+					results = append(results, map[string]any{
+						"head":       branch,
+						"base":       branchInfo.Parent,
+						"remote_url": remoteURL,
+						"pushed":     pushed,
+					})
+				}
+				data, _ := json.MarshalIndent(results, "", "  ")
+				return mcp.NewToolResultText(string(data)), nil
+			}
+
+			// Single branch mode
+			branchInfo, _ := sc.Graph.GetBranch(currentBranch)
 			pushed := false
 			if !sc.Git.RemoteBranchExists(currentBranch) {
 				if err := sc.Git.Push(currentBranch, false); err != nil {
@@ -79,8 +119,6 @@ func registerSyncTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 				}
 				pushed = true
 			}
-
-			remoteURL, _ := sc.Git.GetRemoteURL("origin")
 
 			resp := map[string]any{
 				"head":       currentBranch,
