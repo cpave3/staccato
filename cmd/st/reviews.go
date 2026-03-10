@@ -92,8 +92,9 @@ GitHub PRs associated with stack branches. Produces a unified markdown document.
 				return fmt.Errorf("failed to fetch reviews: %w", err)
 			}
 
-			// Thread replies
+			// Thread replies and filter noise
 			items = reviews.ThreadReplies(items)
+			items = reviews.FilterNoise(items)
 
 			// Format output
 			result := reviews.ReviewResult{

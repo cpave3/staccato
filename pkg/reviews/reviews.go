@@ -2,6 +2,7 @@ package reviews
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -61,6 +62,42 @@ func FilterBots(items []FeedbackItem) []FeedbackItem {
 			item.AuthorType = "Bot"
 		} else {
 			item.AuthorType = "Human"
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+var (
+	botInvocationRe = regexp.MustCompile(`(?i)^@(coderabbitai|greptile)\b`)
+	botNoiseRe      = regexp.MustCompile(`(?i)^(\*\*)?Actionable comments posted:\s*\d+`)
+	reviewSkippedRe = regexp.MustCompile(`(?i)Review skipped`)
+	lastReviewedRe  = regexp.MustCompile(`(?i)^Last reviewed commit:\s*[0-9a-f]+$`)
+)
+
+// FilterNoise removes low-signal items: human bot-invocation pings
+// (e.g. "@coderabbitai review"), bot tally summaries, and review-skipped notices.
+func FilterNoise(items []FeedbackItem) []FeedbackItem {
+	var result []FeedbackItem
+	for _, item := range items {
+		body := strings.TrimSpace(item.Body)
+		// Human comments that are just bot invocations
+		if item.AuthorType == "Human" && botInvocationRe.MatchString(body) {
+			continue
+		}
+		// Bot noise: tally comments, review-skipped notices
+		if item.AuthorType == "Bot" {
+			if botNoiseRe.MatchString(body) || reviewSkippedRe.MatchString(body) {
+				continue
+			}
+		}
+		// Strip trailing "Last reviewed commit: xxx" lines from bot bodies
+		if item.AuthorType == "Bot" {
+			lines := strings.Split(body, "\n")
+			for len(lines) > 0 && lastReviewedRe.MatchString(strings.TrimSpace(lines[len(lines)-1])) {
+				lines = lines[:len(lines)-1]
+			}
+			item.Body = strings.TrimSpace(strings.Join(lines, "\n"))
 		}
 		result = append(result, item)
 	}
@@ -161,6 +198,45 @@ func ResolveBranches(g *graph.Graph, currentBranch string, scope Scope) []string
 	}
 }
 
+const diffHunkMaxLines = 20
+
+// truncateDiffHunk keeps only the last maxLines lines of a diff hunk,
+// since the comment target is always at the end.
+func truncateDiffHunk(hunk string, maxLines int) string {
+	lines := strings.Split(hunk, "\n")
+	if len(lines) <= maxLines {
+		return hunk
+	}
+	return strings.Join(lines[len(lines)-maxLines:], "\n")
+}
+
+var (
+	detailsBlockRe  = regexp.MustCompile(`(?s)<details>.*?</details>`)
+	htmlCommentRe   = regexp.MustCompile(`(?s)<!--.*?-->`)
+	orphanedTagRe   = regexp.MustCompile(`(?m)^\s*</?(details|blockquote|summary|sub)>?\s*$`)
+	htmlTagRe       = regexp.MustCompile(`</?(?:details|blockquote|summary|sub|h[1-6])[^>]*>`)
+	blankLinesRe    = regexp.MustCompile(`\n{3,}`)
+)
+
+// cleanBotBody strips boilerplate from bot review comments:
+// <details> blocks (tools, suggestions, prompts), HTML comments (fingerprinting, auto-generated),
+// and orphaned closing HTML tags left over from partial nesting.
+func cleanBotBody(body string) string {
+	// Strip <details> blocks iteratively to handle nesting
+	for detailsBlockRe.MatchString(body) {
+		body = detailsBlockRe.ReplaceAllString(body, "")
+	}
+	// Strip HTML comments
+	body = htmlCommentRe.ReplaceAllString(body, "")
+	// Strip orphaned closing/opening tags on their own lines
+	body = orphanedTagRe.ReplaceAllString(body, "")
+	// Strip remaining inline HTML tags (h3, sub, etc.)
+	body = htmlTagRe.ReplaceAllString(body, "")
+	// Collapse excessive blank lines
+	body = blankLinesRe.ReplaceAllString(body, "\n\n")
+	return strings.TrimSpace(body)
+}
+
 // FormatMarkdown produces the unified markdown feedback document.
 func FormatMarkdown(result ReviewResult) string {
 	var b strings.Builder
@@ -196,11 +272,18 @@ func FormatMarkdown(result ReviewResult) string {
 
 			if item.DiffHunk != "" {
 				b.WriteString("**Diff context:**\n```diff\n")
-				b.WriteString(item.DiffHunk)
+				b.WriteString(truncateDiffHunk(item.DiffHunk, diffHunkMaxLines))
 				b.WriteString("\n```\n\n")
 			}
 
-			b.WriteString(item.Body)
+			body := item.Body
+			if item.AuthorType == "Bot" {
+				body = cleanBotBody(body)
+			}
+			if body == "" {
+				continue
+			}
+			b.WriteString(body)
 			b.WriteString("\n\n")
 
 			// Render replies

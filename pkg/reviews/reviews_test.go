@@ -1,6 +1,7 @@
 package reviews
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -148,6 +149,196 @@ func TestResolveBranches_ScopeToCurrent(t *testing.T) {
 	// Should be in ancestor order
 	if branches[0] != "feat-a" || branches[1] != "feat-b" {
 		t.Errorf("expected [feat-a, feat-b], got %v", branches)
+	}
+}
+
+func TestTruncateDiffHunk_ShortHunk(t *testing.T) {
+	hunk := "@@ -10,6 +10,8 @@\n line1\n line2\n line3"
+	result := truncateDiffHunk(hunk, 20)
+	if result != hunk {
+		t.Errorf("short hunk should be unchanged, got %q", result)
+	}
+}
+
+func TestTruncateDiffHunk_LongHunk(t *testing.T) {
+	var lines []string
+	for i := range 50 {
+		lines = append(lines, fmt.Sprintf("+line %d", i))
+	}
+	hunk := strings.Join(lines, "\n")
+	result := truncateDiffHunk(hunk, 20)
+	resultLines := strings.Split(result, "\n")
+	if len(resultLines) != 20 {
+		t.Errorf("expected 20 lines, got %d", len(resultLines))
+	}
+	// Should keep the tail
+	if !strings.Contains(result, "+line 49") {
+		t.Error("expected last line to be preserved")
+	}
+}
+
+func TestCleanBotBody_StripsDetailsBlocks(t *testing.T) {
+	body := "Main point.\n\n<details>\n<summary>Tools</summary>\nstuff\n</details>\n\nMore text."
+	result := cleanBotBody(body)
+	if strings.Contains(result, "<details>") {
+		t.Error("should strip <details> blocks")
+	}
+	if !strings.Contains(result, "Main point.") {
+		t.Error("should keep main content")
+	}
+	if !strings.Contains(result, "More text.") {
+		t.Error("should keep content after details block")
+	}
+}
+
+func TestCleanBotBody_StripsHTMLComments(t *testing.T) {
+	body := "Good point.\n\n<!-- fingerprinting:phantom:medusa:hawk -->\n\n<!-- This is an auto-generated comment by CodeRabbit -->"
+	result := cleanBotBody(body)
+	if strings.Contains(result, "fingerprinting") {
+		t.Error("should strip HTML comments")
+	}
+	if !strings.Contains(result, "Good point.") {
+		t.Error("should keep main content")
+	}
+}
+
+func TestCleanBotBody_StripsNestedDetails(t *testing.T) {
+	body := `Review comment.
+
+<details>
+<summary>Tools</summary>
+
+<details>
+<summary>Inner</summary>
+nested stuff
+</details>
+
+</details>
+
+End.`
+	result := cleanBotBody(body)
+	if strings.Contains(result, "<details>") {
+		t.Error("should strip nested details blocks")
+	}
+	if !strings.Contains(result, "Review comment.") {
+		t.Error("should keep leading content")
+	}
+}
+
+func TestCleanBotBody_StripsCodeRabbitSuggestionBlocks(t *testing.T) {
+	body := `Good suggestion.
+
+<!-- suggestion_start -->
+
+<details>
+<summary>Committable suggestion</summary>
+
+` + "```suggestion\ncode here\n```" + `
+
+</details>
+
+<!-- suggestion_end -->`
+	result := cleanBotBody(body)
+	if strings.Contains(result, "suggestion_start") {
+		t.Error("should strip suggestion blocks")
+	}
+	if !strings.Contains(result, "Good suggestion.") {
+		t.Error("should keep main content")
+	}
+}
+
+func TestCleanBotBody_StripsOrphanedClosingTags(t *testing.T) {
+	body := "Good point.\n\n</blockquote></details>\n\n</blockquote></details>\n\n---"
+	result := cleanBotBody(body)
+	if strings.Contains(result, "</details>") || strings.Contains(result, "</blockquote>") {
+		t.Errorf("should strip orphaned closing tags, got %q", result)
+	}
+	if !strings.Contains(result, "Good point.") {
+		t.Error("should keep main content")
+	}
+}
+
+func TestCleanBotBody_StripsHTMLHeadingsAndSub(t *testing.T) {
+	body := "<h3>Greptile Summary</h3>\n\nThis PR does things.\n\n<sub>Last reviewed commit: abc123</sub>"
+	result := cleanBotBody(body)
+	if strings.Contains(result, "<h3>") || strings.Contains(result, "</h3>") {
+		t.Error("should strip h3 tags")
+	}
+	if strings.Contains(result, "<sub>") {
+		t.Error("should strip sub tags")
+	}
+	if !strings.Contains(result, "Greptile Summary") {
+		t.Error("should keep text content from headings")
+	}
+}
+
+func TestFilterNoise_RemovesBotInvocations(t *testing.T) {
+	items := []FeedbackItem{
+		{Author: "dev1", AuthorType: "Human", Body: "@coderabbitai review"},
+		{Author: "dev1", AuthorType: "Human", Body: "@greptile please review"},
+		{Author: "dev1", AuthorType: "Human", Body: "@Coderabbitai review again"},
+		{Author: "dev1", AuthorType: "Human", Body: "actual feedback here"},
+	}
+	filtered := FilterNoise(items)
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(filtered))
+	}
+	if filtered[0].Body != "actual feedback here" {
+		t.Errorf("expected real feedback, got %q", filtered[0].Body)
+	}
+}
+
+func TestFilterNoise_KeepsBotComments(t *testing.T) {
+	items := []FeedbackItem{
+		{Author: "coderabbitai[bot]", AuthorType: "Bot", Body: "Review comment."},
+	}
+	filtered := FilterNoise(items)
+	if len(filtered) != 1 {
+		t.Fatal("should keep bot review comments")
+	}
+}
+
+func TestFilterNoise_RemovesBotTally(t *testing.T) {
+	items := []FeedbackItem{
+		{Author: "coderabbitai[bot]", AuthorType: "Bot", Body: "**Actionable comments posted: 4**\n\n---"},
+	}
+	filtered := FilterNoise(items)
+	if len(filtered) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(filtered))
+	}
+}
+
+func TestFilterNoise_RemovesReviewSkipped(t *testing.T) {
+	items := []FeedbackItem{
+		{Author: "coderabbitai[bot]", AuthorType: "Bot", Body: "> [!IMPORTANT]\n> ## Review skipped\n> Draft detected."},
+	}
+	filtered := FilterNoise(items)
+	if len(filtered) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(filtered))
+	}
+}
+
+func TestFilterNoise_StripsLastReviewedCommit(t *testing.T) {
+	items := []FeedbackItem{
+		{Author: "greptile-apps[bot]", AuthorType: "Bot", Body: "Good analysis here.\n\nLast reviewed commit: 554aa95"},
+	}
+	filtered := FilterNoise(items)
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(filtered))
+	}
+	if strings.Contains(filtered[0].Body, "Last reviewed commit") {
+		t.Error("should strip 'Last reviewed commit' line")
+	}
+	if !strings.Contains(filtered[0].Body, "Good analysis here.") {
+		t.Error("should keep main content")
+	}
+}
+
+func TestCleanBotBody_EmptyAfterCleaning(t *testing.T) {
+	body := "<!-- just a comment -->"
+	result := cleanBotBody(body)
+	if strings.TrimSpace(result) != "" {
+		t.Errorf("expected empty string, got %q", result)
 	}
 }
 

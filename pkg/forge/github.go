@@ -74,63 +74,69 @@ func (g *GitHub) StackStatus(branches []string) (map[string]*PRStatusInfo, error
 		return nil, err
 	}
 
-	cmd := exec.Command("gh", "pr", "list", "--state", "all", "--limit", "100",
-		"--json", "number,headRefName,title,state,isDraft,reviewDecision,url,statusCheckRollup")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg != "" {
-			return nil, fmt.Errorf("failed to list PRs: %s", msg)
-		}
-		return nil, fmt.Errorf("failed to list PRs: %w", err)
+	// Query per-branch to avoid fetching all PRs (which can 504 on large repos).
+	type branchResult struct {
+		branch string
+		prs    []ghPRItem
+		err    error
 	}
 
-	var prs []ghPRItem
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, fmt.Errorf("failed to parse PR list: %w", err)
-	}
-
-	// Build a set of requested branches for fast lookup
-	branchSet := make(map[string]bool, len(branches))
+	ch := make(chan branchResult, len(branches))
 	for _, b := range branches {
-		branchSet[b] = true
+		go func(branch string) {
+			cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "all", "--limit", "1",
+				"--json", "number,headRefName,title,state,isDraft,reviewDecision,url,statusCheckRollup")
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			if err != nil {
+				msg := strings.TrimSpace(stderr.String())
+				if msg != "" {
+					ch <- branchResult{branch: branch, err: fmt.Errorf("failed to list PRs for %s: %s", branch, msg)}
+				} else {
+					ch <- branchResult{branch: branch, err: fmt.Errorf("failed to list PRs for %s: %w", branch, err)}
+				}
+				return
+			}
+			var items []ghPRItem
+			if err := json.Unmarshal(out, &items); err != nil {
+				ch <- branchResult{branch: branch, err: fmt.Errorf("failed to parse PR list for %s: %w", branch, err)}
+				return
+			}
+			ch <- branchResult{branch: branch, prs: items}
+		}(b)
 	}
 
-	// Match PRs to branches, preferring OPEN > MERGED > CLOSED
-	statePriority := map[string]int{"OPEN": 3, "MERGED": 2, "CLOSED": 1}
-	matched := make(map[string]*ghPRItem)
-
-	for i := range prs {
-		pr := &prs[i]
-		if !branchSet[pr.HeadRefName] {
-			continue
-		}
-		existing, ok := matched[pr.HeadRefName]
-		if !ok || statePriority[pr.State] > statePriority[existing.State] {
-			matched[pr.HeadRefName] = pr
-		}
-	}
-
-	// Build result map
+	// Collect results
 	result := make(map[string]*PRStatusInfo, len(branches))
-	for _, b := range branches {
-		pr, ok := matched[b]
-		if !ok {
-			result[b] = &PRStatusInfo{Branch: b}
+	for range branches {
+		res := <-ch
+		if res.err != nil {
+			return nil, res.err
+		}
+		if len(res.prs) == 0 {
+			result[res.branch] = &PRStatusInfo{Branch: res.branch}
 			continue
 		}
-		result[b] = &PRStatusInfo{
-			Branch:       b,
+		// With --limit 1 and --state all, gh returns the most relevant PR (open preferred).
+		// If multiple exist, pick best by state priority.
+		statePriority := map[string]int{"OPEN": 3, "MERGED": 2, "CLOSED": 1}
+		best := &res.prs[0]
+		for i := 1; i < len(res.prs); i++ {
+			if statePriority[res.prs[i].State] > statePriority[best.State] {
+				best = &res.prs[i]
+			}
+		}
+		result[res.branch] = &PRStatusInfo{
+			Branch:       res.branch,
 			HasPR:        true,
-			Number:       pr.Number,
-			Title:        pr.Title,
-			State:        pr.State,
-			IsDraft:      pr.IsDraft,
-			ReviewStatus: pr.ReviewDecision,
-			URL:          pr.URL,
-			CheckStatus:  deriveCheckStatus(pr.StatusCheckRollup),
+			Number:       best.Number,
+			Title:        best.Title,
+			State:        best.State,
+			IsDraft:      best.IsDraft,
+			ReviewStatus: best.ReviewDecision,
+			URL:          best.URL,
+			CheckStatus:  deriveCheckStatus(best.StatusCheckRollup),
 		}
 	}
 
