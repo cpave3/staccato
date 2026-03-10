@@ -1,10 +1,12 @@
 package forge
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // GitHub implements Forge using the gh CLI.
@@ -74,8 +76,14 @@ func (g *GitHub) StackStatus(branches []string) (map[string]*PRStatusInfo, error
 
 	cmd := exec.Command("gh", "pr", "list", "--state", "all", "--limit", "100",
 		"--json", "number,headRefName,title,state,isDraft,reviewDecision,url,statusCheckRollup")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("failed to list PRs: %s", msg)
+		}
 		return nil, fmt.Errorf("failed to list PRs: %w", err)
 	}
 

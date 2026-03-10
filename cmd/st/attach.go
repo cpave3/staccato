@@ -30,14 +30,14 @@ type attachTUI struct {
 	git            *git.Runner
 	graph          *graph.Graph
 	branchToAttach string
-	candidates     []attachCandidate
+	allCandidates  []attachCandidate // full unfiltered list
+	candidates     []attachCandidate // currently visible (filtered) list
 	selected       string
 	setAsRoot      bool
 	searchMode     bool
 	searchQuery    string
-	matches        []int
-	matchIndex     int
 	quitting       bool
+	viewHeight     int // terminal height for viewport
 }
 
 func (a attachTUI) Init() tea.Cmd {
@@ -49,30 +49,36 @@ func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Handle search mode
 		if a.searchMode {
-			switch msg.String() {
-			case "esc":
+			switch msg.Type {
+			case tea.KeyEsc:
 				a.searchMode = false
 				a.searchQuery = ""
-				a.updateMatches()
+				a.applyFilter()
 				return a, nil
-			case "enter":
+			case tea.KeyEnter:
 				a.searchMode = false
-				if len(a.matches) > 0 {
-					a.matchIndex = 0
-					idx := a.matches[a.matchIndex]
-					a.list.Select(idx)
+				idx := a.list.Index()
+				if idx >= 0 && idx < len(a.candidates) {
+					a.selected = a.candidates[idx].name
+					a.quitting = true
+					return a, tea.Quit
 				}
 				return a, nil
-			case "backspace":
+			case tea.KeyBackspace:
 				if len(a.searchQuery) > 0 {
 					a.searchQuery = a.searchQuery[:len(a.searchQuery)-1]
-					a.updateMatches()
+					a.applyFilter()
 				}
 				return a, nil
+			case tea.KeyUp, tea.KeyDown:
+				// Pass arrow keys to the list for navigation
+				var cmd tea.Cmd
+				a.list, cmd = a.list.Update(msg)
+				return a, cmd
 			default:
 				if len(msg.String()) == 1 {
 					a.searchQuery += msg.String()
-					a.updateMatches()
+					a.applyFilter()
 				}
 				return a, nil
 			}
@@ -85,10 +91,9 @@ func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			a.searchMode = true
 			a.searchQuery = ""
-			a.updateMatches()
+			a.applyFilter()
 			return a, nil
 		case "r":
-			// Set selected branch as root (stop recursion here)
 			idx := a.list.Index()
 			if idx >= 0 && idx < len(a.candidates) {
 				a.selected = a.candidates[idx].name
@@ -97,7 +102,6 @@ func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, tea.Quit
 			}
 		case "enter":
-			// Use index instead of type assertion (Bubble Tea list doesn't preserve custom types)
 			idx := a.list.Index()
 			if idx >= 0 && idx < len(a.candidates) {
 				a.selected = a.candidates[idx].name
@@ -108,7 +112,8 @@ func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		a.list.SetWidth(msg.Width)
-		a.list.SetHeight(msg.Height - 5)
+		a.viewHeight = msg.Height - 5 // header + footer
+		a.list.SetHeight(a.viewHeight)
 		return a, nil
 	}
 
@@ -117,19 +122,35 @@ func (a attachTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
-func (a *attachTUI) updateMatches() {
-	a.matches = []int{}
-	if a.searchQuery == "" {
-		return
+// applyFilter rebuilds candidates and list items based on search query.
+// When query is empty, restores all candidates.
+func (a *attachTUI) applyFilter() {
+	source := a.allCandidates
+	if len(source) == 0 {
+		source = a.candidates
 	}
-	query := strings.ToLower(a.searchQuery)
-	for i, item := range a.list.Items() {
-		if c, ok := item.(attachCandidate); ok {
+
+	if a.searchQuery == "" {
+		// Restore full list
+		a.candidates = source
+	} else {
+		query := strings.ToLower(a.searchQuery)
+		var filtered []attachCandidate
+		for _, c := range source {
 			if strings.Contains(strings.ToLower(c.name), query) {
-				a.matches = append(a.matches, i)
+				filtered = append(filtered, c)
 			}
 		}
+		a.candidates = filtered
 	}
+
+	// Rebuild list items
+	var items []list.Item
+	for _, c := range a.candidates {
+		items = append(items, c)
+	}
+	a.list.SetItems(items)
+	a.list.Select(0)
 }
 
 func (a attachTUI) View() string {
@@ -141,42 +162,53 @@ func (a attachTUI) View() string {
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4")).Render(fmt.Sprintf("  Attach '%s'", a.branchToAttach)) + "\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("  Select a parent branch from the stack") + "\n\n")
 
-	items := a.list.Items()
 	selectedIdx := a.list.Index()
 
-	for i, item := range items {
-		c := item.(attachCandidate)
+	// Viewport: determine which items to render
+	maxVisible := a.viewHeight
+	if maxVisible <= 0 {
+		maxVisible = 15 // default if no window size received
+	}
+	total := len(a.candidates)
+
+	startIdx := 0
+	if total > maxVisible {
+		// Center the selected item in the viewport
+		startIdx = selectedIdx - maxVisible/2
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		if startIdx+maxVisible > total {
+			startIdx = total - maxVisible
+		}
+	}
+	endIdx := startIdx + maxVisible
+	if endIdx > total {
+		endIdx = total
+	}
+
+	// Show scroll indicator at top
+	if startIdx > 0 {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render(fmt.Sprintf("  ↑ %d more", startIdx)) + "\n")
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		c := a.candidates[i]
 		icon := "○"
 		if c.isCurrent {
 			icon = "●"
 		}
 		line := fmt.Sprintf("%s %s", icon, c.name)
 
-		isMatch := false
-		if a.searchQuery != "" {
-			for _, matchIdx := range a.matches {
-				if matchIdx == i {
-					isMatch = true
-					break
-				}
-			}
-		}
-
 		if i == selectedIdx {
 			if c.isCurrent {
 				line = "> " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#04B575")).Render(line)
-			} else if isMatch {
-				line = "> " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(line)
 			} else {
 				line = "> " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Render(line)
 			}
 		} else {
-			if a.searchMode && !isMatch && a.searchQuery != "" {
-				line = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render(line)
-			} else if c.isCurrent {
+			if c.isCurrent {
 				line = "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#04B575")).Render(line)
-			} else if isMatch {
-				line = "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(line)
 			} else {
 				line = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Render(line)
 			}
@@ -184,10 +216,15 @@ func (a attachTUI) View() string {
 		b.WriteString(line + "\n")
 	}
 
+	// Show scroll indicator at bottom
+	if endIdx < total {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render(fmt.Sprintf("  ↓ %d more", total-endIdx)) + "\n")
+	}
+
 	if a.searchMode {
 		b.WriteString("\n" + lipgloss.NewStyle().Background(lipgloss.Color("#333333")).Foreground(lipgloss.Color("#FFFFFF")).Render(fmt.Sprintf("  /%s", a.searchQuery)))
-		if len(a.matches) > 0 {
-			fmt.Fprintf(&b, "  [%d/%d matches]", a.matchIndex+1, len(a.matches))
+		if len(a.candidates) > 0 {
+			fmt.Fprintf(&b, "  [%d matches]", len(a.candidates))
 		}
 	}
 
@@ -265,6 +302,7 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 		git:            gitRunner,
 		graph:          g,
 		branchToAttach: branchToAttach,
+		allCandidates:  candidates,
 		candidates:     candidates,
 	}
 

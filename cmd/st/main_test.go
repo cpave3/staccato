@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -362,6 +363,62 @@ func TestRestack(t *testing.T) {
 		out := runStExpectError(t, "restack")
 		assertContains(t, out, "--to-current")
 	})
+
+	t.Run("handles_stale_base_sha_after_manual_rebase", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create a branch with one commit
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1 content")
+		repo.AddAndCommit("f1 commit")
+
+		// Record the original BaseSHA (root HEAD at branch creation)
+		g := loadGraph(t, repo)
+		origBaseSHA := g.Branches["f1"].BaseSHA
+
+		// Add commits to root that MODIFY the same files differently
+		// This makes git unable to skip them via patch-id matching
+		repo.Checkout(root)
+		for i := 0; i < 5; i++ {
+			repo.CreateFile(fmt.Sprintf("root-%d.txt", i), fmt.Sprintf("content %d", i))
+			repo.AddAndCommit(fmt.Sprintf("root commit %d", i))
+		}
+
+		// Manually rebase f1 onto root (outside of st)
+		repo.Checkout("f1")
+		cmd := exec.Command("git", "rebase", root)
+		cmd.Dir = repo.Dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("manual rebase failed: %v\n%s", err, out)
+		}
+
+		// The graph's BaseSHA is now stale — points to the old root HEAD
+		g = loadGraph(t, repo)
+		if g.Branches["f1"].BaseSHA != origBaseSHA {
+			t.Fatal("test setup: BaseSHA should still be the old value")
+		}
+
+		// st restack should detect the stale BaseSHA and use the current merge-base
+		runSt(t, "restack")
+
+		// Verify f1 has its own file
+		if !repo.FileExists("f1.txt") {
+			t.Error("f1 should have f1.txt after restack")
+		}
+
+		// Verify restack only replayed f1's own commit (not all root commits)
+		countCmd := exec.Command("git", "rev-list", "--count", root+"..f1")
+		countCmd.Dir = repo.Dir
+		countOut, err := countCmd.Output()
+		if err != nil {
+			t.Fatalf("rev-list failed: %v", err)
+		}
+		count := strings.TrimSpace(string(countOut))
+		if count != "1" {
+			t.Errorf("expected 1 commit on f1 above %s, got %s", root, count)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -659,6 +716,7 @@ func TestAttach(t *testing.T) {
 		model := attachTUI{
 			list:           l,
 			branchToAttach: "test",
+			allCandidates:  candidates,
 			candidates:     candidates,
 		}
 
@@ -687,6 +745,7 @@ func TestAttach(t *testing.T) {
 		model := attachTUI{
 			list:           l,
 			branchToAttach: "test",
+			allCandidates:  candidates,
 			candidates:     candidates,
 		}
 
@@ -718,6 +777,7 @@ func TestAttach(t *testing.T) {
 		model := attachTUI{
 			list:           l,
 			branchToAttach: "test",
+			allCandidates:  candidates,
 			candidates:     candidates,
 		}
 
@@ -749,6 +809,7 @@ func TestAttach(t *testing.T) {
 		model := attachTUI{
 			list:           l,
 			branchToAttach: "test",
+			allCandidates:  candidates,
 			candidates:     candidates,
 		}
 
@@ -824,6 +885,7 @@ func TestAttach(t *testing.T) {
 		model := attachTUI{
 			list:           l,
 			branchToAttach: "main",
+			allCandidates:  candidates,
 			candidates:     candidates,
 		}
 
@@ -836,6 +898,198 @@ func TestAttach(t *testing.T) {
 		// Verify the TUI would have something to show
 		if len(model.candidates) == 0 {
 			t.Error("solo root should have candidates for TUI")
+		}
+	})
+
+	t.Run("tui_search_filters_candidates", func(t *testing.T) {
+		candidates := []attachCandidate{
+			{name: "main", isCurrent: false},
+			{name: "feature-auth", isCurrent: false},
+			{name: "feature-api", isCurrent: false},
+			{name: "bugfix-login", isCurrent: false},
+			{name: "develop", isCurrent: false},
+		}
+		var items []list.Item
+		for _, c := range candidates {
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			allCandidates:  candidates,
+			candidates:     candidates,
+		}
+
+		// Enter search mode
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+		m := updated.(attachTUI)
+		if !m.searchMode {
+			t.Fatal("expected search mode after /")
+		}
+
+		// Type "feat" — should filter to only feature branches
+		for _, ch := range "feat" {
+			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+			m = updated.(attachTUI)
+		}
+
+		// The visible candidates should only be the matches
+		if len(m.candidates) != 2 {
+			t.Fatalf("expected 2 filtered candidates, got %d", len(m.candidates))
+		}
+		if m.candidates[0].name != "feature-auth" || m.candidates[1].name != "feature-api" {
+			t.Errorf("filtered candidates = %v, want [feature-auth, feature-api]", m.candidates)
+		}
+
+		// Press enter to confirm, select first match
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = updated.(attachTUI)
+		if m.selected != "feature-auth" {
+			t.Errorf("selected = %q, want feature-auth", m.selected)
+		}
+	})
+
+	t.Run("tui_search_esc_restores_all_candidates", func(t *testing.T) {
+		candidates := []attachCandidate{
+			{name: "main", isCurrent: false},
+			{name: "feature-auth", isCurrent: false},
+			{name: "bugfix-login", isCurrent: false},
+		}
+		var items []list.Item
+		for _, c := range candidates {
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			allCandidates:  candidates,
+			candidates:     candidates,
+		}
+
+		// Enter search, type "feat", then esc
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+		m := updated.(attachTUI)
+		for _, ch := range "feat" {
+			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+			m = updated.(attachTUI)
+		}
+		// Should be filtered now
+		if len(m.candidates) != 1 {
+			t.Fatalf("expected 1 filtered candidate, got %d", len(m.candidates))
+		}
+
+		// Press esc to cancel search
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+		m = updated.(attachTUI)
+		// All candidates should be restored
+		if len(m.candidates) != 3 {
+			t.Fatalf("expected 3 candidates after esc, got %d", len(m.candidates))
+		}
+	})
+
+	t.Run("tui_search_arrows_navigate_filtered_list", func(t *testing.T) {
+		candidates := []attachCandidate{
+			{name: "main", isCurrent: false},
+			{name: "feature-auth", isCurrent: false},
+			{name: "feature-api", isCurrent: false},
+			{name: "bugfix-login", isCurrent: false},
+		}
+		var items []list.Item
+		for _, c := range candidates {
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			allCandidates:  candidates,
+			candidates:     candidates,
+		}
+
+		// Enter search mode, type "feat"
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+		m := updated.(attachTUI)
+		for _, ch := range "feat" {
+			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+			m = updated.(attachTUI)
+		}
+
+		// Should have 2 filtered items, cursor at 0 (feature-auth)
+		if len(m.candidates) != 2 {
+			t.Fatalf("expected 2 filtered candidates, got %d", len(m.candidates))
+		}
+		if m.list.Index() != 0 {
+			t.Fatalf("expected index 0, got %d", m.list.Index())
+		}
+
+		// Press down arrow while still in search mode
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(attachTUI)
+
+		// Should still be in search mode, cursor moved to 1 (feature-api)
+		if !m.searchMode {
+			t.Error("expected to still be in search mode")
+		}
+		if m.list.Index() != 1 {
+			t.Errorf("expected index 1 after down arrow, got %d", m.list.Index())
+		}
+
+		// Press enter — should select feature-api
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = updated.(attachTUI)
+		if m.selected != "feature-api" {
+			t.Errorf("selected = %q, want feature-api", m.selected)
+		}
+	})
+
+	t.Run("tui_viewport_scrolls_large_list", func(t *testing.T) {
+		// Create 100 branches — View() should not render all of them
+		var candidates []attachCandidate
+		var items []list.Item
+		for i := 0; i < 100; i++ {
+			c := attachCandidate{name: fmt.Sprintf("branch-%03d", i)}
+			candidates = append(candidates, c)
+			items = append(items, c)
+		}
+		l := list.New(items, list.NewDefaultDelegate(), 80, 20)
+		l.SetShowHelp(false)
+		l.SetShowFilter(false)
+		l.SetShowStatusBar(false)
+		l.SetShowTitle(false)
+
+		model := attachTUI{
+			list:           l,
+			branchToAttach: "test",
+			allCandidates:  candidates,
+			candidates:     candidates,
+		}
+
+		// Set terminal size to 20 lines
+		updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+		m := updated.(attachTUI)
+
+		view := m.View()
+		lines := strings.Split(view, "\n")
+		// Should be significantly less than 100 lines (header + viewport + footer)
+		if len(lines) > 30 {
+			t.Errorf("view has %d lines, expected viewport to limit to ~20", len(lines))
 		}
 	})
 
@@ -3772,4 +4026,38 @@ func candidateNames(candidates []attachCandidate) []string {
 		names = append(names, c.name)
 	}
 	return names
+}
+
+// ---------------------------------------------------------------------------
+// Reviews command tests
+// ---------------------------------------------------------------------------
+
+func TestReviews_NoBranches(t *testing.T) {
+	repo := setupRepo(t)
+	defer repo.Cleanup()
+	repo.InitStack()
+
+	// With no branches in the stack, should exit cleanly
+	out := runSt(t, "reviews")
+	if !strings.Contains(out, "no branches in scope") {
+		t.Errorf("expected 'no branches in scope', got: %s", out)
+	}
+}
+
+func TestReviews_FlagsRegistered(t *testing.T) {
+	repo := setupRepo(t)
+	defer repo.Cleanup()
+	repo.InitStack()
+
+	// Verify help shows the expected flags
+	out := runSt(t, "reviews", "--help")
+	if !strings.Contains(out, "--current") {
+		t.Error("missing --current flag in help")
+	}
+	if !strings.Contains(out, "--to-current") {
+		t.Error("missing --to-current flag in help")
+	}
+	if !strings.Contains(out, "--out") {
+		t.Error("missing --out flag in help")
+	}
 }

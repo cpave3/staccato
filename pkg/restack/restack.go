@@ -259,12 +259,30 @@ func (e *Engine) restackBranches(g *graph.Graph, branches []string) (*Result, er
 			return result, result.Error
 		}
 
-		// Use --onto with BaseSHA for correct stacked rebasing.
-		// This replays only the branch's own commits (BaseSHA..HEAD) onto the parent,
-		// avoiding conflicts from replaying ancestor commits.
+		// Use --onto to replay only the branch's own commits onto the parent.
+		// We pick the best fork-point: whichever of the stored BaseSHA or
+		// the live merge-base is a more recent ancestor of the branch.
+		// The stored BaseSHA can become stale after manual rebases or trunk
+		// fast-forwards; the merge-base can be too old when the parent was
+		// just rebased (e.g., during a chain restack). Using the more recent
+		// one ensures minimal commit replay in both scenarios.
 		var rebaseErr error
-		if b.BaseSHA != "" {
-			rebaseErr = e.git.RebaseOnto(b.Parent, b.BaseSHA)
+		upstream := b.BaseSHA
+		mergeBase, mbErr := e.git.GetMergeBase(branch, b.Parent)
+		if mbErr == nil && mergeBase != "" {
+			if upstream == "" {
+				upstream = mergeBase
+			} else {
+				// Use whichever is a descendant of the other (more recent).
+				// If merge-base is a descendant of BaseSHA, it's more recent.
+				isAnc, err := e.git.IsAncestor(upstream, mergeBase)
+				if err == nil && isAnc {
+					upstream = mergeBase
+				}
+			}
+		}
+		if upstream != "" {
+			rebaseErr = e.git.RebaseOnto(b.Parent, upstream)
 		} else {
 			rebaseErr = e.git.Rebase(b.Parent)
 		}
