@@ -79,15 +79,21 @@ func TestLoad_SharedRef(t *testing.T) {
 	repo, root := setupRepo(t)
 	defer repo.Cleanup()
 
-	// Write a graph to the shared ref
+	gitRunner := git.NewRunner(repo.Dir)
+	email, err := gitRunner.GetUserEmail()
+	if err != nil {
+		t.Fatalf("GetUserEmail: %v", err)
+	}
+	userRef := graph.UserGraphRef(email)
+
+	// Write a graph to the per-user shared ref
 	g := graph.NewGraph(root)
 	g.AddBranch("feature-b", root, "aaa", "bbb")
 	data, err := json.Marshal(g)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	gitRunner := git.NewRunner(repo.Dir)
-	if err := gitRunner.WriteBlobRef(graph.SharedGraphRef, data); err != nil {
+	if err := gitRunner.WriteBlobRef(userRef, data); err != nil {
 		t.Fatalf("WriteBlobRef: %v", err)
 	}
 
@@ -170,14 +176,20 @@ func TestSave_SharedRef(t *testing.T) {
 	repo, root := setupRepo(t)
 	defer repo.Cleanup()
 
-	// Set up shared ref first
+	gitRunner := git.NewRunner(repo.Dir)
+	email, err := gitRunner.GetUserEmail()
+	if err != nil {
+		t.Fatalf("GetUserEmail: %v", err)
+	}
+	userRef := graph.UserGraphRef(email)
+
+	// Set up per-user shared ref
 	g := graph.NewGraph(root)
 	data, err := json.Marshal(g)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	gitRunner := git.NewRunner(repo.Dir)
-	if err := gitRunner.WriteBlobRef(graph.SharedGraphRef, data); err != nil {
+	if err := gitRunner.WriteBlobRef(userRef, data); err != nil {
 		t.Fatalf("WriteBlobRef: %v", err)
 	}
 
@@ -191,8 +203,8 @@ func TestSave_SharedRef(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// Verify by reading the ref directly
-	readData, err := gitRunner.ReadBlobRef(graph.SharedGraphRef)
+	// Verify by reading the per-user ref directly
+	readData, err := gitRunner.ReadBlobRef(userRef)
 	if err != nil {
 		t.Fatalf("ReadBlobRef: %v", err)
 	}
@@ -202,5 +214,48 @@ func TestSave_SharedRef(t *testing.T) {
 	}
 	if _, ok := loaded.GetBranch("shared-test"); !ok {
 		t.Error("expected shared-test branch in saved graph")
+	}
+}
+
+func TestLoad_LegacyRefMigratesToPerUser(t *testing.T) {
+	repo, root := setupRepo(t)
+	defer repo.Cleanup()
+
+	gitRunner := git.NewRunner(repo.Dir)
+
+	// Write graph to LEGACY ref
+	g := graph.NewGraph(root)
+	g.AddBranch("legacy-branch", root, "aaa", "bbb")
+	data, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := gitRunner.WriteBlobRef(graph.SharedGraphRefLegacy, data); err != nil {
+		t.Fatalf("WriteBlobRef: %v", err)
+	}
+
+	// Load should find the legacy ref and migrate
+	sc, err := Load(repo.Dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := sc.Graph.GetBranch("legacy-branch"); !ok {
+		t.Error("expected legacy-branch in loaded graph")
+	}
+
+	// Save should write to per-user ref (not legacy)
+	if err := sc.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	email, _ := gitRunner.GetUserEmail()
+	userRef := graph.UserGraphRef(email)
+	if !gitRunner.RefExists(userRef) {
+		t.Error("expected per-user ref to exist after save")
+	}
+
+	// Legacy ref should be cleaned up
+	if gitRunner.RefExists(graph.SharedGraphRefLegacy) {
+		t.Error("legacy ref should be deleted after migration")
 	}
 }

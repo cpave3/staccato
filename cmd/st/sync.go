@@ -33,11 +33,7 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 
 			printer.SyncFetching()
 
-			sc := &stcontext.StaccatoContext{
-				Graph:    g,
-				Git:      gitRunner,
-				RepoPath: repoPath,
-			}
+			sc := stcontext.NewContext(g, gitRunner, repoPath)
 
 			result, err := stync.Run(sc, stync.Options{
 				DryRun:   dryRun,

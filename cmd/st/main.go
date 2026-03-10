@@ -98,6 +98,7 @@ func init() {
 	rootCmd.AddCommand(downCmd())
 	rootCmd.AddCommand(topCmd())
 	rootCmd.AddCommand(bottomCmd())
+	rootCmd.AddCommand(skillCmd())
 }
 
 // requireBranch checks that HEAD is not detached. Returns an error if HEAD is detached.
@@ -135,6 +136,12 @@ func getContext() (*graph.Graph, *git.Runner, *output.Printer, string, error) {
 	return sc.Graph, sc.Git, printer, sc.RepoPath, nil
 }
 
+// loadStaccatoContext returns the full StaccatoContext (needed by commands that
+// use shared-mode features like IsShared/SharedRef).
+func loadStaccatoContext() (*stcontext.StaccatoContext, error) {
+	return stcontext.Load("")
+}
+
 // checkStaleness performs an offline check and prints a warning if local state is behind remote.
 func checkStaleness(g *graph.Graph, gitRunner *git.Runner, printer *output.Printer) {
 	hasRemote, _ := gitRunner.HasRemote()
@@ -153,10 +160,6 @@ func checkStaleness(g *graph.Graph, gitRunner *git.Runner, printer *output.Print
 
 // saveContext saves the graph
 func saveContext(g *graph.Graph, repoPath string, gitRunner *git.Runner) error {
-	sc := &stcontext.StaccatoContext{
-		Graph:    g,
-		Git:      gitRunner,
-		RepoPath: repoPath,
-	}
+	sc := stcontext.NewContext(g, gitRunner, repoPath)
 	return sc.Save()
 }

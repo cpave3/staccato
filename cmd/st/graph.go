@@ -33,8 +33,14 @@ func graphShareCmd() *cobra.Command {
 				return err
 			}
 
-			if gitRunner.RefExists(graph.SharedGraphRef) {
-				return fmt.Errorf("graph is already shared (stored at %s)", graph.SharedGraphRef)
+			email, err := gitRunner.GetUserEmail()
+			if err != nil {
+				return fmt.Errorf("git user.email not configured — set it with: git config user.email you@example.com")
+			}
+			userRef := graph.UserGraphRef(email)
+
+			if gitRunner.RefExists(userRef) {
+				return fmt.Errorf("graph is already shared (stored at %s)", userRef)
 			}
 
 			localPath := filepath.Join(repoPath, graph.DefaultGraphPath)
@@ -49,7 +55,7 @@ func graphShareCmd() *cobra.Command {
 				return fmt.Errorf("local graph is invalid: %w", err)
 			}
 
-			if err := gitRunner.WriteBlobRef(graph.SharedGraphRef, data); err != nil {
+			if err := gitRunner.WriteBlobRef(userRef, data); err != nil {
 				return fmt.Errorf("failed to write shared ref: %w", err)
 			}
 
@@ -66,7 +72,7 @@ func graphShareCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Println("Graph shared. Push with `st sync` or `git push origin refs/staccato/graph`")
+			fmt.Println("Graph shared. Push with `st sync` or `git push origin " + userRef + "`")
 			return nil
 		},
 	}
@@ -78,21 +84,21 @@ func graphLocalCmd() *cobra.Command {
 		Short: "Move the graph back to local-only storage",
 		Long:  "Moves the shared graph ref back to the local file, removing the git ref.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, gitRunner, _, repoPath, err := getContext()
+			sc, err := loadStaccatoContext()
 			if err != nil {
 				return err
 			}
 
-			if !gitRunner.RefExists(graph.SharedGraphRef) {
+			if !sc.IsShared() {
 				return fmt.Errorf("graph is already local (no shared ref found)")
 			}
 
-			data, err := gitRunner.ReadBlobRef(graph.SharedGraphRef)
+			data, err := sc.Git.ReadBlobRef(sc.SharedRef())
 			if err != nil {
 				return fmt.Errorf("failed to read shared ref: %w", err)
 			}
 
-			localPath := filepath.Join(repoPath, graph.DefaultGraphPath)
+			localPath := filepath.Join(sc.RepoPath, graph.DefaultGraphPath)
 			dir := filepath.Dir(localPath)
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
@@ -101,16 +107,21 @@ func graphLocalCmd() *cobra.Command {
 				return fmt.Errorf("failed to write local graph: %w", err)
 			}
 
-			if err := gitRunner.DeleteRef(graph.SharedGraphRef); err != nil {
+			if err := sc.Git.DeleteRef(sc.SharedRef()); err != nil {
 				return fmt.Errorf("failed to delete shared ref: %w", err)
 			}
 
+			// Also clean up legacy ref if it exists
+			if sc.Git.RefExists(graph.SharedGraphRefLegacy) {
+				sc.Git.DeleteRef(graph.SharedGraphRefLegacy)
+			}
+
 			// Remove fetch refspec if remote exists
-			hasRemote, _ := gitRunner.HasRemote()
+			hasRemote, _ := sc.Git.HasRemote()
 			if hasRemote {
 				refspec := "+refs/staccato/*:refs/staccato/*"
-				if gitRunner.HasFetchRefspec("refs/staccato") {
-					gitRunner.RemoveFetchRefspec(refspec)
+				if sc.Git.HasFetchRefspec("refs/staccato") {
+					sc.Git.RemoveFetchRefspec(refspec)
 				}
 			}
 
@@ -125,13 +136,13 @@ func graphWhichCmd() *cobra.Command {
 		Use:   "which",
 		Short: "Show current graph storage mode",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, gitRunner, _, _, err := getContext()
+			sc, err := loadStaccatoContext()
 			if err != nil {
 				return err
 			}
 
-			if gitRunner.RefExists(graph.SharedGraphRef) {
-				fmt.Printf("Shared (%s)\n", graph.SharedGraphRef)
+			if sc.IsShared() {
+				fmt.Printf("Shared (%s)\n", sc.SharedRef())
 			} else {
 				fmt.Printf("Local (%s)\n", graph.DefaultGraphPath)
 			}

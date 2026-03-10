@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,10 +10,17 @@ import (
 )
 
 const (
-	CurrentVersion   = 1
-	DefaultGraphPath = ".git/stack/graph.json"
-	SharedGraphRef   = "refs/staccato/graph"
+	CurrentVersion     = 1
+	DefaultGraphPath   = ".git/stack/graph.json"
+	SharedGraphRefLegacy = "refs/staccato/graph"
+	SharedGraphRefPrefix = "refs/staccato/graphs/"
 )
+
+// UserGraphRef returns the per-user shared graph ref for the given email.
+func UserGraphRef(email string) string {
+	h := sha256.Sum256([]byte(email))
+	return SharedGraphRefPrefix + hex.EncodeToString(h[:8])
+}
 
 // Branch represents a branch in the stack with its metadata
 type Branch struct {

@@ -231,6 +231,11 @@ func (r *Runner) DeleteBranch(name string, force bool) error {
 	return err
 }
 
+// GetUserEmail returns the configured git user.email.
+func (r *Runner) GetUserEmail() (string, error) {
+	return r.Run("config", "user.email")
+}
+
 // GetRemoteURL returns the URL of the named remote
 func (r *Runner) GetRemoteURL(name string) (string, error) {
 	return r.Run("remote", "get-url", name)

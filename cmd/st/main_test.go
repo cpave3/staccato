@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/internal/testutil"
 	"github.com/cpave3/staccato/pkg/graph"
 )
@@ -138,36 +139,7 @@ func getCurrentBranch(t *testing.T, repo *testutil.GitRepo) string {
 
 func loadGraph(t *testing.T, repo *testutil.GitRepo) *graph.Graph {
 	t.Helper()
-
-	// Check shared ref first
-	cmd := exec.Command("git", "rev-parse", "--verify", graph.SharedGraphRef)
-	cmd.Dir = repo.Dir
-	if err := cmd.Run(); err == nil {
-		// Shared mode: read from ref
-		show := exec.Command("git", "show", graph.SharedGraphRef)
-		show.Dir = repo.Dir
-		data, err := show.Output()
-		if err != nil {
-			t.Fatalf("loadGraph: failed to read shared ref: %v", err)
-		}
-		var g graph.Graph
-		if err := json.Unmarshal(data, &g); err != nil {
-			t.Fatalf("loadGraph unmarshal: %v", err)
-		}
-		return &g
-	}
-
-	// Local mode: read from file
-	path := filepath.Join(repo.Dir, ".git", "stack", "graph.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("loadGraph: %v", err)
-	}
-	var g graph.Graph
-	if err := json.Unmarshal(data, &g); err != nil {
-		t.Fatalf("loadGraph unmarshal: %v", err)
-	}
-	return &g
+	return loadGraphInDir(t, repo.Dir)
 }
 
 func graphContains(t *testing.T, repo *testutil.GitRepo, branch string) bool {
@@ -179,36 +151,11 @@ func graphContains(t *testing.T, repo *testutil.GitRepo, branch string) bool {
 
 func loadGraphInDir(t *testing.T, dir string) *graph.Graph {
 	t.Helper()
-
-	// Check shared ref first
-	cmd := exec.Command("git", "rev-parse", "--verify", graph.SharedGraphRef)
-	cmd.Dir = dir
-	if err := cmd.Run(); err == nil {
-		// Shared mode: read from ref
-		show := exec.Command("git", "show", graph.SharedGraphRef)
-		show.Dir = dir
-		data, err := show.Output()
-		if err != nil {
-			t.Fatalf("loadGraphInDir: failed to read shared ref: %v", err)
-		}
-		var g graph.Graph
-		if err := json.Unmarshal(data, &g); err != nil {
-			t.Fatalf("loadGraphInDir unmarshal: %v", err)
-		}
-		return &g
-	}
-
-	// Local mode: read from file
-	path := filepath.Join(dir, ".git", "stack", "graph.json")
-	data, err := os.ReadFile(path)
+	sc, err := stcontext.Load(dir)
 	if err != nil {
 		t.Fatalf("loadGraphInDir: %v", err)
 	}
-	var g graph.Graph
-	if err := json.Unmarshal(data, &g); err != nil {
-		t.Fatalf("loadGraphInDir unmarshal: %v", err)
-	}
-	return &g
+	return sc.Graph
 }
 
 func assertContains(t *testing.T, haystack, needle string) {
@@ -1412,6 +1359,278 @@ func TestSyncMultipleMergedBranches(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestSyncChildSurvivesSecondSync
+// ---------------------------------------------------------------------------
+// Regression: after merging a middle branch (root <- m1 <- m2) and running
+// sync twice, m2 should still be in the graph reparented to root.
+
+func TestSyncChildSurvivesSecondSync(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: root -> m1 -> m2
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1 content")
+	repo.AddAndCommit("m1 commit")
+	runSt(t, "append", "m2")
+	repo.CreateFile("m2.txt", "m2 content")
+	repo.AddAndCommit("m2 commit")
+
+	// Push m1 to origin
+	repo.RunGit("push", "origin", "m1")
+
+	// Simulate regular merge of m1 into root on GitHub:
+	// fast-forward origin/root to m1's commit, then delete origin/m1
+	originDir := repo.OriginDir()
+	m1SHA, _ := repo.RunGit("rev-parse", "m1")
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m1SHA)
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// First sync from m2 (top of stack)
+	repo.Checkout("m2")
+	out1 := runSt(t, "-v", "sync")
+
+	// m1 should be detected as merged
+	assertContains(t, out1, "Merged")
+
+	// After first sync: m2 should be reparented to root
+	g1 := loadGraph(t, repo)
+	m2b, ok := g1.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph after first sync")
+	}
+	if m2b.Parent != root {
+		t.Errorf("m2 parent after first sync = %q, want %q", m2b.Parent, root)
+	}
+
+	// Second sync — should be a no-op for merge detection
+	out2 := runSt(t, "-v", "sync")
+
+	// m2 should still be in the graph after second sync
+	g2 := loadGraph(t, repo)
+	m2b2, ok := g2.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph after second sync")
+	}
+	if m2b2.Parent != root {
+		t.Errorf("m2 parent after second sync = %q, want %q", m2b2.Parent, root)
+	}
+
+	// The second sync should NOT detect any merged branches
+	_ = out2
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncChildSurvivesSecondSyncSquashMerge
+// ---------------------------------------------------------------------------
+// Same as above but with squash merge (more common on GitHub).
+
+func TestSyncChildSurvivesSecondSyncSquashMerge(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: root -> m1 -> m2
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1 content")
+	repo.AddAndCommit("m1 commit")
+	runSt(t, "append", "m2")
+	repo.CreateFile("m2.txt", "m2 content")
+	repo.AddAndCommit("m2 commit")
+
+	// Push both to origin (realistic: user pushes their stack before merge)
+	repo.RunGit("push", "origin", "m1")
+	repo.RunGit("push", "origin", "m2")
+
+	// Simulate squash merge of m1 into root:
+	// Cherry-pick m1 changes onto root as a new commit, delete origin/m1
+	repo.Checkout(root)
+	repo.RunGit("cherry-pick", "m1")
+	repo.RunGit("push", "origin", root)
+	originDir := repo.OriginDir()
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// First sync from m2
+	repo.Checkout("m2")
+	out1 := runSt(t, "-v", "sync")
+	assertContains(t, out1, "Merged")
+
+	g1 := loadGraph(t, repo)
+	m2b, ok := g1.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph after first sync")
+	}
+	if m2b.Parent != root {
+		t.Errorf("m2 parent after first sync = %q, want %q", m2b.Parent, root)
+	}
+
+	// Second sync
+	out2 := runSt(t, "-v", "sync")
+
+	g2 := loadGraph(t, repo)
+	m2b2, ok := g2.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph after second sync")
+	}
+	if m2b2.Parent != root {
+		t.Errorf("m2 parent after second sync = %q, want %q", m2b2.Parent, root)
+	}
+	_ = out2
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncChildSurvivesSharedGraphMode
+// ---------------------------------------------------------------------------
+// Regression: in shared graph mode, after merging a middle branch and syncing,
+// the child branch should survive with correct parent after a second sync.
+
+func TestSyncChildSurvivesSharedGraphMode(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: root -> m1 -> m2
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1 content")
+	repo.AddAndCommit("m1 commit")
+	runSt(t, "append", "m2")
+	repo.CreateFile("m2.txt", "m2 content")
+	repo.AddAndCommit("m2 commit")
+
+	// Enable shared graph mode (after branches exist so graph file exists)
+	runSt(t, "graph", "share")
+
+	// Push both to origin
+	repo.RunGit("push", "origin", "m1")
+	repo.RunGit("push", "origin", "m2")
+
+	// Sync to push graph ref to origin
+	runSt(t, "-v", "sync")
+
+	// Simulate regular merge of m1 into root on GitHub:
+	originDir := repo.OriginDir()
+	m1SHA, _ := repo.RunGit("rev-parse", "m1")
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m1SHA)
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// First sync from m2
+	repo.Checkout("m2")
+	out1 := runSt(t, "-v", "sync")
+	assertContains(t, out1, "Merged")
+
+	g1 := loadGraph(t, repo)
+	m2b, ok := g1.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph after first sync (shared mode)")
+	}
+	if m2b.Parent != root {
+		t.Errorf("m2 parent after first sync = %q, want %q", m2b.Parent, root)
+	}
+
+	// Second sync
+	out2 := runSt(t, "-v", "sync")
+
+	g2 := loadGraph(t, repo)
+	m2b2, ok := g2.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph after second sync (shared mode)")
+	}
+	if m2b2.Parent != root {
+		t.Errorf("m2 parent after second sync = %q, want %q", m2b2.Parent, root)
+	}
+	_ = out2
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncChildSurvivesSharedGraphStaleRemote
+// ---------------------------------------------------------------------------
+// Regression: in shared graph mode, if the graph ref push fails on first sync,
+// the second sync's fetch overwrites the local ref with the stale remote graph.
+// ReconcileGraphs must preserve the local parent (reparented during merge removal)
+// rather than reverting to the stale remote parent.
+
+func TestSyncChildSurvivesSharedGraphStaleRemote(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Create stack: root -> m1 -> m2
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1 content")
+	repo.AddAndCommit("m1 commit")
+	runSt(t, "append", "m2")
+	repo.CreateFile("m2.txt", "m2 content")
+	repo.AddAndCommit("m2 commit")
+
+	// Enable shared graph mode
+	runSt(t, "graph", "share")
+
+	// Push both + graph ref to origin
+	repo.RunGit("push", "origin", "m1")
+	repo.RunGit("push", "origin", "m2")
+	runSt(t, "-v", "sync")
+
+	// Simulate regular merge of m1 into root on GitHub
+	originDir := repo.OriginDir()
+	m1SHA, _ := repo.RunGit("rev-parse", "m1")
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, m1SHA)
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+
+	// First sync from m2: detect merge, reparent m2
+	repo.Checkout("m2")
+	runSt(t, "-v", "sync")
+
+	g1 := loadGraph(t, repo)
+	if _, ok := g1.Branches["m2"]; !ok {
+		t.Fatal("m2 should be in graph after first sync")
+	}
+
+	// Simulate the graph ref push having failed: revert origin's per-user ref
+	// to the OLD version (with m1 still present, m2 parented under m1).
+	email, _ := repo.RunGit("config", "user.email")
+	userRef := graph.UserGraphRef(email)
+	oldGraph := graph.NewGraph(root)
+	oldGraph.AddBranch("m1", root, "aaa", m1SHA)
+	m2SHA, _ := repo.RunGit("rev-parse", "m2")
+	oldGraph.AddBranch("m2", "m1", "bbb", m2SHA)
+	oldGraphJSON, _ := json.Marshal(oldGraph)
+
+	// Write stale graph directly into origin bare repo's per-user ref
+	tmpFile := filepath.Join(originDir, "stale-graph.json")
+	os.WriteFile(tmpFile, oldGraphJSON, 0644)
+	blobHash := runGitInDir(t, originDir, "hash-object", "-w", tmpFile)
+	runGitInDir(t, originDir, "update-ref", userRef, blobHash)
+	os.Remove(tmpFile)
+
+	// Second sync: fetch will overwrite local graph ref with stale remote.
+	// This should succeed — reconciliation should prefer local parent.
+	out2 := runSt(t, "-v", "sync")
+
+	g2 := loadGraph(t, repo)
+	m2b2, ok := g2.Branches["m2"]
+	if !ok {
+		t.Fatal("m2 should still be in graph after second sync with stale remote")
+	}
+	if m2b2.Parent != root {
+		t.Errorf("m2 parent after second sync = %q, want %q (stale remote should not revert reparent)", m2b2.Parent, root)
+	}
+	// m1 should NOT be re-added (it was merged and deleted locally)
+	if graphContains(t, repo, "m1") {
+		t.Error("m1 should not be re-added from stale remote graph")
+	}
+	_ = out2
+}
+
+// ---------------------------------------------------------------------------
 // TestSyncSkipsUnpushedBranches
 // ---------------------------------------------------------------------------
 
@@ -1878,11 +2097,9 @@ func TestGraph(t *testing.T) {
 			t.Error("local graph file should be removed after share")
 		}
 
-		// Ref should exist
-		out, err := repo.RunGit("rev-parse", "--verify", "refs/staccato/graph")
-		if err != nil {
-			t.Fatalf("shared ref should exist: %v (output: %s)", err, out)
-		}
+		// Per-user ref should exist
+		out := runSt(t, "graph", "which")
+		assertContains(t, out, "Shared")
 	})
 
 	t.Run("which_reports_shared_after_share", func(t *testing.T) {
@@ -1916,12 +2133,9 @@ func TestGraph(t *testing.T) {
 			t.Error("local graph file should exist after local")
 		}
 
-		// Ref should be gone
-		refCheck := exec.Command("git", "rev-parse", "--verify", "refs/staccato/graph")
-		refCheck.Dir = repo.Dir
-		if err := refCheck.Run(); err == nil {
-			t.Error("shared ref should be removed after local")
-		}
+		// Should be back to local mode
+		out := runSt(t, "graph", "which")
+		assertContains(t, out, "Local")
 	})
 
 	t.Run("share_when_no_local_graph_errors", func(t *testing.T) {
@@ -2003,7 +2217,8 @@ func TestStalenessWarningOnLog(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSyncReconcileSharedGraph(t *testing.T) {
-	// Machine A creates branch X, pushes. Machine B creates branch Y, syncs.
+	// Same user, two machines. Machine A creates branchX, pushes.
+	// Machine B (same user) creates branchY, syncs.
 	// After sync on B, both X and Y should be in the graph.
 
 	// Set up "Machine A" repo
@@ -2018,19 +2233,21 @@ func TestSyncReconcileSharedGraph(t *testing.T) {
 	repoA.CreateFile("x.txt", "x")
 	repoA.AddAndCommit("x commit")
 
-	// Switch to shared graph mode (needs graph.json to exist)
+	// Switch to shared graph mode
 	runSt(t, "graph", "share")
 
-	// Push the graph ref to remote first so fetch refspec won't fail
-	repoA.RunGit("push", "origin", "refs/staccato/graph:refs/staccato/graph", "--force")
+	// Get the per-user ref name
+	userRef := runSt(t, "graph", "which")
 
-	// Add fetch refspec for graph ref
-	repoA.RunGit("config", "--add", "remote.origin.fetch", "+refs/staccato/graph:refs/staccato/graph")
+	// Push the per-user graph ref to remote
+	email, _ := repoA.RunGit("config", "user.email")
+	ref := graph.UserGraphRef(email)
+	repoA.RunGit("push", "origin", ref+":"+ref, "--force")
 
 	// Sync from A (pushes branchX and graph ref)
 	runSt(t, "sync")
 
-	// "Machine B": clone from the same bare origin
+	// "Machine B": clone from the same bare origin (same user!)
 	originDir := repoA.OriginDir()
 	tmpB := t.TempDir()
 	cloneCmd := exec.Command("git", "clone", originDir, tmpB)
@@ -2045,29 +2262,26 @@ func TestSyncReconcileSharedGraph(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chdir(oldWd) })
 
-	// Configure git user for Machine B
-	runGitInDir(t, tmpB, "config", "user.email", "b@test.com")
-	runGitInDir(t, tmpB, "config", "user.name", "User B")
+	// Same user on Machine B (same email — this is the key!)
+	runGitInDir(t, tmpB, "config", "user.email", email)
+	runGitInDir(t, tmpB, "config", "user.name", "Test User")
 
-	// Set up shared graph fetch refspec on B and fetch the graph ref
-	runGitInDir(t, tmpB, "config", "--add", "remote.origin.fetch", "+refs/staccato/graph:refs/staccato/graph")
+	// Set up shared graph fetch refspec on B and fetch
+	runGitInDir(t, tmpB, "config", "--add", "remote.origin.fetch", "+refs/staccato/*:refs/staccato/*")
 	runGitInDir(t, tmpB, "fetch", "origin")
 
 	// Create local tracking branch for branchX on Machine B
 	runGitInDir(t, tmpB, "checkout", "-b", "branchX", "origin/branchX")
 	runGitInDir(t, tmpB, "checkout", rootA)
 
-	// Machine B creates branch Y (locally) — st new adds it to the shared graph
+	// Machine B creates branch Y — st new adds it to the per-user graph ref
 	runSt(t, "new", "branchY")
 	os.WriteFile(filepath.Join(tmpB, "y.txt"), []byte("y"), 0644)
 	runGitInDir(t, tmpB, "add", ".")
 	runGitInDir(t, tmpB, "commit", "-m", "y commit")
 
-	// At this point, Machine B's local graph has branchY but lost branchX
-	// (because st new rewrote the shared ref with only branchY).
-	// Meanwhile, the remote still has branchX from Machine A's sync.
-	// Sync from B should reconcile: fetch brings back the remote graph with
-	// branchX, and reconciliation merges local branchY into it.
+	// Sync from B should reconcile: fetch brings A's version of the graph
+	// (with branchX), local has branchY. Union merge keeps both.
 	runSt(t, "sync")
 
 	// Load the graph on Machine B and check both branches exist
@@ -2078,6 +2292,7 @@ func TestSyncReconcileSharedGraph(t *testing.T) {
 	if _, ok := g.Branches["branchY"]; !ok {
 		t.Error("branchY should be in graph after reconciliation on Machine B")
 	}
+	_ = userRef
 }
 
 // ---------------------------------------------------------------------------
@@ -3528,6 +3743,27 @@ func TestAttachFilterStacked(t *testing.T) {
 			t.Fatalf("expected 2 candidates, got %d: %v", len(candidates), candidateNames(candidates))
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// skill install
+// ---------------------------------------------------------------------------
+
+func TestSkillInstall_NpxNotFound(t *testing.T) {
+	setupRepo(t)
+
+	// Run with empty PATH so npx cannot be found.
+	cmd := exec.Command(stBinary, "skill", "install")
+	setCoverEnv(cmd)
+	cmd.Env = append(cmd.Env, "PATH=")
+	cmd.Env = append(cmd.Env, "HOME="+t.TempDir())
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error when npx not in PATH, got success\nOutput: %s", out)
+	}
+	if !strings.Contains(string(out), "npx") {
+		t.Fatalf("expected error mentioning npx, got: %s", out)
+	}
 }
 
 func candidateNames(candidates []attachCandidate) []string {

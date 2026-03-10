@@ -135,10 +135,9 @@ func TestReconcileGraphs(t *testing.T) {
 		}
 	})
 
-	t.Run("shared_branch_local_not_ahead", func(t *testing.T) {
+	t.Run("higher_version_wins", func(t *testing.T) {
 		tmpDir, gitRunner := initRepoWithCommit(t)
 
-		// Create branch with extra commit as "remote" state
 		exec.Command("git", "-C", tmpDir, "checkout", "-b", "shared").Run()
 		os.WriteFile(filepath.Join(tmpDir, "extra.txt"), []byte("extra"), 0644)
 		exec.Command("git", "-C", tmpDir, "add", ".").Run()
@@ -146,12 +145,14 @@ func TestReconcileGraphs(t *testing.T) {
 		remoteSHA, _ := gitRunner.GetBranchSHA("shared")
 		exec.Command("git", "-C", tmpDir, "checkout", "main").Run()
 
-		// Local has the base SHA (behind remote)
 		baseSHA, _ := gitRunner.GetBranchSHA("main")
 
+		// Local version 1, remote version 2 — remote wins as base
 		local := graph.NewGraph("main")
+		local.Version = 1
 		local.AddBranch("shared", "main", "abc", baseSHA)
 		remote := graph.NewGraph("main")
+		remote.Version = 2
 		remote.AddBranch("shared", "main", "abc", remoteSHA)
 
 		result := ReconcileGraphs(local, remote, gitRunner)
@@ -159,9 +160,42 @@ func TestReconcileGraphs(t *testing.T) {
 		if !ok {
 			t.Fatal("shared branch should be present")
 		}
-		// Local is not ahead of remote, so remote HeadSHA should be kept
+		// Remote has higher version, so its metadata wins
 		if b.HeadSHA != remoteSHA {
-			t.Errorf("expected remote HeadSHA %s (local not ahead), got %s", remoteSHA, b.HeadSHA)
+			t.Errorf("expected remote HeadSHA %s (higher version), got %s", remoteSHA, b.HeadSHA)
+		}
+	})
+
+	t.Run("shared_branch_local_parent_preferred", func(t *testing.T) {
+		tmpDir, gitRunner := initRepoWithCommit(t)
+
+		// Create a branch in git
+		exec.Command("git", "-C", tmpDir, "checkout", "-b", "feat").Run()
+		os.WriteFile(filepath.Join(tmpDir, "feat.txt"), []byte("feat"), 0644)
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+		exec.Command("git", "-C", tmpDir, "commit", "-m", "feat").Run()
+		sha, _ := gitRunner.GetBranchSHA("feat")
+		exec.Command("git", "-C", tmpDir, "checkout", "main").Run()
+
+		// Local: feat reparented to main (after merge removal of old parent)
+		local := graph.NewGraph("main")
+		local.AddBranch("feat", "main", "local-base", sha)
+
+		// Remote: stale graph still has feat with old parent
+		remote := graph.NewGraph("main")
+		remote.AddBranch("feat", "old-parent", "remote-base", sha)
+
+		result := ReconcileGraphs(local, remote, gitRunner)
+		b, ok := result.Branches["feat"]
+		if !ok {
+			t.Fatal("feat should be present")
+		}
+		// Local parent should win (reflects reparenting from merge removal)
+		if b.Parent != "main" {
+			t.Errorf("expected local parent %q, got %q", "main", b.Parent)
+		}
+		if b.BaseSHA != "local-base" {
+			t.Errorf("expected local BaseSHA %q, got %q", "local-base", b.BaseSHA)
 		}
 	})
 }

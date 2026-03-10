@@ -50,8 +50,8 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 	result.Fetched = true
 
 	// Reconcile shared graph after fetch
-	if gitRunner.RefExists(graph.SharedGraphRef) {
-		reconcileSharedGraph(g, gitRunner)
+	if sc.IsShared() {
+		reconcileSharedGraph(g, sc.SharedRef(), gitRunner)
 	}
 
 	trunk := g.Root
@@ -89,13 +89,16 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 
 	// 2. Fast-forward trunk
 	if gitRunner.RemoteBranchExists(trunk) {
+		trunkBefore, _ := gitRunner.GetCommitSHA(trunk)
 		if originalBranch == trunk {
 			if err := gitRunner.MergeFFOnly("origin/" + trunk); err == nil {
-				result.TrunkUpdated = true
+				trunkAfter, _ := gitRunner.GetCommitSHA(trunk)
+				result.TrunkUpdated = trunkAfter != trunkBefore
 			}
 		} else {
 			if err := gitRunner.FastForwardBranch(trunk, "origin/"+trunk); err == nil {
-				result.TrunkUpdated = true
+				trunkAfter, _ := gitRunner.GetCommitSHA(trunk)
+				result.TrunkUpdated = trunkAfter != trunkBefore
 			}
 		}
 	}
@@ -173,8 +176,8 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 	}
 
 	// 8. Push shared graph ref if in shared mode
-	if !opts.DownOnly && gitRunner.RefExists(graph.SharedGraphRef) {
-		gitRunner.PushRef(graph.SharedGraphRef)
+	if !opts.DownOnly && sc.IsShared() {
+		gitRunner.PushRef(sc.SharedRef())
 	}
 
 	// 9. Restore original branch if it still exists
@@ -229,8 +232,9 @@ func DetectMergedBranches(g *graph.Graph, gitRunner *git.Runner, trunk string) (
 }
 
 // reconcileSharedGraph merges the fetched remote graph with the local graph.
-func reconcileSharedGraph(g *graph.Graph, gitRunner *git.Runner) {
-	remoteData, err := gitRunner.ReadBlobRef(graph.SharedGraphRef)
+// Uses version-based merge: higher version is base, union-add from lower.
+func reconcileSharedGraph(g *graph.Graph, ref string, gitRunner *git.Runner) {
+	remoteData, err := gitRunner.ReadBlobRef(ref)
 	if err != nil {
 		return
 	}
@@ -249,16 +253,24 @@ func reconcileSharedGraph(g *graph.Graph, gitRunner *git.Runner) {
 	g.Version = reconciled.Version
 }
 
-// ReconcileGraphs performs the union merge: start with remote, add local-only branches,
-// and for shared branches keep local HeadSHA if local is ahead.
+// ReconcileGraphs merges two graphs from the same user (different machines).
+// The higher-versioned graph is the base; branches from the lower-versioned
+// graph are union-added if they exist as local git branches.
 func ReconcileGraphs(local *graph.Graph, remote *graph.Graph, gitRunner *git.Runner) *graph.Graph {
+	// Determine which graph is the base (higher version = more recent).
+	base, other := local, remote
+	if remote.Version > local.Version {
+		base, other = remote, local
+	}
+
 	result := &graph.Graph{
-		Version:  remote.Version,
-		Root:     remote.Root,
+		Version:  base.Version,
+		Root:     base.Root,
 		Branches: make(map[string]*graph.Branch),
 	}
 
-	for name, branch := range remote.Branches {
+	// Start with all base branches that still exist locally.
+	for name, branch := range base.Branches {
 		if exists, _ := gitRunner.BranchExists(name); exists {
 			result.Branches[name] = &graph.Branch{
 				Name:    branch.Name,
@@ -269,23 +281,17 @@ func ReconcileGraphs(local *graph.Graph, remote *graph.Graph, gitRunner *git.Run
 		}
 	}
 
-	for name, localBranch := range local.Branches {
-		if _, inRemote := remote.Branches[name]; !inRemote {
-			if exists, _ := gitRunner.BranchExists(name); exists {
-				result.Branches[name] = &graph.Branch{
-					Name:    localBranch.Name,
-					Parent:  localBranch.Parent,
-					BaseSHA: localBranch.BaseSHA,
-					HeadSHA: localBranch.HeadSHA,
-				}
-			}
-		} else {
-			remoteBranch := remote.Branches[name]
-			if localBranch.HeadSHA != remoteBranch.HeadSHA {
-				isAnc, err := gitRunner.IsAncestor(remoteBranch.HeadSHA, localBranch.HeadSHA)
-				if err == nil && isAnc {
-					result.Branches[name].HeadSHA = localBranch.HeadSHA
-				}
+	// Union-add branches from the other graph that aren't in the base.
+	for name, branch := range other.Branches {
+		if _, inBase := result.Branches[name]; inBase {
+			continue // base version wins
+		}
+		if exists, _ := gitRunner.BranchExists(name); exists {
+			result.Branches[name] = &graph.Branch{
+				Name:    branch.Name,
+				Parent:  branch.Parent,
+				BaseSHA: branch.BaseSHA,
+				HeadSHA: branch.HeadSHA,
 			}
 		}
 	}

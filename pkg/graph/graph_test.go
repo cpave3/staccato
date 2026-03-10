@@ -153,6 +153,28 @@ func TestGraph_ReparentChildren(t *testing.T) {
 	}
 }
 
+func TestUserGraphRef(t *testing.T) {
+	ref := UserGraphRef("alice@example.com")
+
+	// Should be under refs/staccato/graphs/
+	if ref == SharedGraphRefLegacy {
+		t.Error("per-user ref should differ from legacy ref")
+	}
+	if ref[:len("refs/staccato/graphs/")] != "refs/staccato/graphs/" {
+		t.Errorf("ref should start with refs/staccato/graphs/, got %s", ref)
+	}
+
+	// Same email produces same ref
+	if UserGraphRef("alice@example.com") != ref {
+		t.Error("same email should produce same ref")
+	}
+
+	// Different email produces different ref
+	if UserGraphRef("bob@example.com") == ref {
+		t.Error("different email should produce different ref")
+	}
+}
+
 func TestGraph_CreatesDirectoryOnSave(t *testing.T) {
 	tmpDir := t.TempDir()
 	graphPath := filepath.Join(tmpDir, "nested", "deep", "graph.json")
