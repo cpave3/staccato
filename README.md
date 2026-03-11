@@ -52,32 +52,32 @@ st sync --down
 
 ## Commands
 
-| Command | Description | Flags |
-| --- | --- | --- |
-| `st new <branch>` | Create a new branch from root/trunk | |
-| `st append <branch>` | Create a child branch from current | |
-| `st insert <branch>` | Insert a branch before current, restack downstream | |
-| `st restack` | Restack stack in topological order | `--to-current` |
-| `st continue` | Resume restack after conflict resolution | |
-| `st attach [branch]` | Interactively adopt/relocate a branch in the stack | `--auto`, `--parent <branch>` |
-| `st switch` | Interactive branch switcher | |
-| `st log` | Display stack hierarchy | |
-| `st sync` | Fetch, detect merged branches, restack & push | `--dry-run`, `--down` |
-| `st backup` | Create a manual backup of all stack branches | |
-| `st restore [branch]` | Restore from backup | `--all` |
-| `st pr make` | Create a PR for the current branch | |
-| `st pr view` | View the PR for the current branch | |
-| `st status` | Show PR status for the entire stack | |
-| `st graph share` | Share the graph via a pushable/fetchable git ref | |
-| `st graph local` | Move the graph back to local-only storage | |
-| `st graph which` | Show current graph storage mode | |
-| `st mcp` | Start the MCP server (stdio transport) | |
+| Command               | Description                                        | Flags                         |
+| --------------------- | -------------------------------------------------- | ----------------------------- |
+| `st new <branch>`     | Create a new branch from root/trunk                |                               |
+| `st append <branch>`  | Create a child branch from current                 |                               |
+| `st insert <branch>`  | Insert a branch before current, restack downstream |                               |
+| `st restack`          | Restack stack in topological order                 | `--to-current`                |
+| `st continue`         | Resume restack after conflict resolution           |                               |
+| `st attach [branch]`  | Interactively adopt/relocate a branch in the stack | `--auto`, `--parent <branch>` |
+| `st switch`           | Interactive branch switcher                        |                               |
+| `st log`              | Display stack hierarchy                            |                               |
+| `st sync`             | Fetch, detect merged branches, restack & push      | `--dry-run`, `--down`         |
+| `st backup`           | Create a manual backup of all stack branches       |                               |
+| `st restore [branch]` | Restore from backup                                | `--all`                       |
+| `st pr make`          | Create a PR for the current branch                 |                               |
+| `st pr view`          | View the PR for the current branch                 |                               |
+| `st status`           | Show PR status for the entire stack                |                               |
+| `st graph share`      | Share the graph via a pushable/fetchable git ref   |                               |
+| `st graph local`      | Move the graph back to local-only storage          |                               |
+| `st graph which`      | Show current graph storage mode                    |                               |
+| `st mcp`              | Start the MCP server (stdio transport)             |                               |
 
 ### `st attach`
 
 Adopts existing branches into the stack. Always launches an interactive TUI, even if the branch is already tracked (allowing you to relocate it).
 
-- **Recursive attachment**: After selecting a parent, if that parent isn't tracked either, it prompts for *its* parent, and so on up the chain
+- **Recursive attachment**: After selecting a parent, if that parent isn't tracked either, it prompts for _its_ parent, and so on up the chain
 - **Trunk auto-detection**: Common trunk names (`main`, `master`, `develop`, `trunk`) are automatically set as root when selected
 - **`r` keybinding**: Press `r` in the TUI to manually designate any branch as root
 - **`--parent <branch>`**: Skip the TUI and specify the parent directly. Works for both new and already-tracked branches. Trunk names are auto-detected as root.
@@ -156,6 +156,7 @@ st graph local    # Move back to local-only storage
 ```
 
 In shared mode:
+
 - The graph is stored as a blob at `refs/staccato/graph` — invisible to checkout but pushable/fetchable
 - `st sync` automatically pushes the graph ref alongside branches
 - A fetch refspec is configured so `git fetch` pulls the graph ref too
@@ -193,7 +194,7 @@ This runs the MCP server over stdio. You don't typically run this directly — i
 ### Adding to Claude Code
 
 ```bash
-claude mcp add staccato --user -- st mcp
+claude mcp add staccato --scope user -- st mcp
 ```
 
 ### Adding to OpenCode
