@@ -139,17 +139,17 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 		}
 	}
 
-	// 6. Restack remaining branches
-	if len(g.Branches) > 0 {
+	// 6. Restack current lineage only
+	lineage := restack.GetLineage(g, originalBranch)
+	if len(lineage) > 1 { // more than just root
 		backupMgr := backup.NewManager(gitRunner, sc.RepoPath)
 		engine := restack.NewEngine(gitRunner, backupMgr)
-		restackResult, err := engine.Restack(g, trunk)
+		restackResult, err := engine.RestackLineage(g, originalBranch, lineage)
 		if err != nil {
 			if restackResult != nil && restackResult.Conflicts {
 				result.Conflicts = true
 				result.ConflictsAt = restackResult.ConflictsAt
 				// Save restack state so `st continue` can resume
-				lineage := restack.GetLineage(g, trunk)
 				restack.SaveRestackState(sc.RepoPath, &restack.RestackState{
 					Lineage: lineage,
 				})

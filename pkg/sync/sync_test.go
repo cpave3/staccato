@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
 )
@@ -198,4 +199,124 @@ func TestReconcileGraphs(t *testing.T) {
 			t.Errorf("expected local BaseSHA %q, got %q", "local-base", b.BaseSHA)
 		}
 	})
+}
+
+func initRepoWithRemote(t *testing.T) (string, string, *git.Runner) {
+	t.Helper()
+	// Create the "remote" bare repo
+	bareDir := t.TempDir()
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	run(bareDir, "init", "--bare", "-b", "main")
+
+	// Clone it to get a working repo with origin set up
+	tmpDir := t.TempDir()
+	run(tmpDir, "clone", bareDir, "repo")
+	repoDir := filepath.Join(tmpDir, "repo")
+	run(repoDir, "config", "user.email", "test@test.com")
+	run(repoDir, "config", "user.name", "Test User")
+
+	// Initial commit
+	os.WriteFile(filepath.Join(repoDir, "init.txt"), []byte("init"), 0644)
+	run(repoDir, "add", ".")
+	run(repoDir, "commit", "-m", "initial")
+	run(repoDir, "push", "origin", "main")
+
+	return repoDir, bareDir, git.NewRunner(repoDir)
+}
+
+func TestSyncRestacksOnlyCurrentLineage(t *testing.T) {
+	repoDir, bareDir, gitRunner := initRepoWithRemote(t)
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	// Create lineage A: main -> feat-a1 -> feat-a2
+	run(repoDir, "checkout", "-b", "feat-a1")
+	os.WriteFile(filepath.Join(repoDir, "a1.txt"), []byte("a1"), 0644)
+	run(repoDir, "add", ".")
+	run(repoDir, "commit", "-m", "a1")
+	a1SHA := getSHA(t, repoDir, "feat-a1")
+
+	run(repoDir, "checkout", "-b", "feat-a2")
+	os.WriteFile(filepath.Join(repoDir, "a2.txt"), []byte("a2"), 0644)
+	run(repoDir, "add", ".")
+	run(repoDir, "commit", "-m", "a2")
+
+	// Create lineage B: main -> feat-b1
+	run(repoDir, "checkout", "main")
+	run(repoDir, "checkout", "-b", "feat-b1")
+	os.WriteFile(filepath.Join(repoDir, "b1.txt"), []byte("b1"), 0644)
+	run(repoDir, "add", ".")
+	run(repoDir, "commit", "-m", "b1")
+	b1SHABefore := getSHA(t, repoDir, "feat-b1")
+
+	// Push all branches
+	run(repoDir, "push", "origin", "feat-a1")
+	run(repoDir, "push", "origin", "feat-a2")
+	run(repoDir, "push", "origin", "feat-b1")
+
+	// Build the graph
+	mainSHA := getSHA(t, repoDir, "main")
+	g := graph.NewGraph("main")
+	g.AddBranch("feat-a1", "main", mainSHA, a1SHA)
+	a2SHA := getSHA(t, repoDir, "feat-a2")
+	g.AddBranch("feat-a2", "feat-a1", a1SHA, a2SHA)
+	g.AddBranch("feat-b1", "main", mainSHA, b1SHABefore)
+
+	// Advance trunk on origin (simulate someone merging a PR)
+	// Clone fresh to make the commit on origin
+	advanceDir := t.TempDir()
+	run(advanceDir, "clone", bareDir, "adv")
+	advDir := filepath.Join(advanceDir, "adv")
+	run(advDir, "config", "user.email", "test@test.com")
+	run(advDir, "config", "user.name", "Test User")
+	os.WriteFile(filepath.Join(advDir, "trunk-advance.txt"), []byte("new"), 0644)
+	run(advDir, "add", ".")
+	run(advDir, "commit", "-m", "trunk advance")
+	run(advDir, "push", "origin", "main")
+
+	// Checkout lineage A branch and run sync
+	run(repoDir, "checkout", "feat-a2")
+
+	sc := stcontext.NewContext(g, gitRunner, repoDir)
+	result, err := Run(sc, Options{})
+	if err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	// feat-b1 should NOT have been restacked (its SHA should be unchanged)
+	b1SHAAfter := getSHA(t, repoDir, "feat-b1")
+	if b1SHAAfter != b1SHABefore {
+		t.Errorf("feat-b1 was restacked but shouldn't have been (outside current lineage)\nbefore: %s\nafter:  %s", b1SHABefore, b1SHAAfter)
+	}
+
+	// feat-a1 and feat-a2 SHOULD have been restacked (they're in the current lineage)
+	if result.RestackedCount == 0 {
+		t.Error("expected some branches to be restacked in the current lineage")
+	}
+}
+
+func getSHA(t *testing.T, dir, ref string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", ref)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("failed to get SHA for %s: %v", ref, err)
+	}
+	return string(out[:len(out)-1]) // trim newline
 }
