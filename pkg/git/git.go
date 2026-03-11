@@ -44,6 +44,12 @@ func (r *Runner) CreateAndCheckoutBranch(name string) error {
 	return err
 }
 
+// CreateAndCheckoutBranchFrom creates a new branch from a specific start point and switches to it
+func (r *Runner) CreateAndCheckoutBranchFrom(name, startPoint string) error {
+	_, err := r.Run("checkout", "-b", name, startPoint)
+	return err
+}
+
 // CheckoutBranch switches to an existing branch
 func (r *Runner) CheckoutBranch(name string) error {
 	_, err := r.Run("checkout", name)

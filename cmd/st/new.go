@@ -32,7 +32,7 @@ func newCmd() *cobra.Command {
 			}
 
 			// Create branch from root
-			err = git.CreateAndCheckoutBranch(branchName)
+			err = git.CreateAndCheckoutBranchFrom(branchName, g.Root)
 			if err != nil {
 				return fmt.Errorf("failed to create branch: %w", err)
 			}

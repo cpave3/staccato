@@ -211,6 +211,51 @@ func TestNew(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("creates_branch_from_root_not_current_head", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create branch foo with a unique commit
+		runSt(t, "new", "foo")
+		if err := repo.CreateFile("foo.txt", "foo content"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.AddAndCommit("foo commit"); err != nil {
+			t.Fatal(err)
+		}
+		fooSHA := repo.HeadSHA()
+
+		// While still on foo, create bar via st new
+		runSt(t, "new", "bar")
+
+		// bar should be checked out
+		if cur := getCurrentBranch(t, repo); cur != "bar" {
+			t.Errorf("current branch = %q, want bar", cur)
+		}
+
+		// bar should be at the root's HEAD, not foo's HEAD
+		barSHA := repo.HeadSHA()
+		// Get root SHA for comparison
+		if err := repo.Checkout(root); err != nil {
+			t.Fatal(err)
+		}
+		rootSHA := repo.HeadSHA()
+		if err := repo.Checkout("bar"); err != nil {
+			t.Fatal(err)
+		}
+
+		if barSHA == fooSHA {
+			t.Error("bar has same SHA as foo — should be based on root, not foo")
+		}
+		if barSHA != rootSHA {
+			t.Errorf("bar SHA = %q, want root SHA %q", barSHA, rootSHA)
+		}
+
+		// bar should NOT have foo.txt
+		if repo.FileExists("foo.txt") {
+			t.Error("bar contains foo.txt — should not have foo's commits")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
