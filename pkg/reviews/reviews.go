@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/cpave3/staccato/pkg/restack"
 )
 
 // Scope determines which branches to collect reviews from.
@@ -188,12 +189,14 @@ func ResolveBranches(g *graph.Graph, currentBranch string, scope Scope) []string
 			}
 		}
 		return ancestors
-	default: // ScopeAll
+	default: // ScopeAll — lineage of current branch (ancestors + descendants), excluding root
+		lineage := restack.GetLineage(g, currentBranch)
 		var branches []string
-		for name := range g.Branches {
-			branches = append(branches, name)
+		for _, name := range lineage {
+			if name != g.Root {
+				branches = append(branches, name)
+			}
 		}
-		sort.Strings(branches)
 		return branches
 	}
 }

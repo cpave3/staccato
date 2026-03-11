@@ -123,7 +123,45 @@ func testGraph() *graph.Graph {
 	return g
 }
 
-func TestResolveBranches_ScopeAll(t *testing.T) {
+// Helper to build a graph with two sibling stacks:
+//
+//	main -> feat-a -> feat-b (stack 1)
+//	main -> unrelated-1      (stack 2)
+func testGraphSiblingStacks() *graph.Graph {
+	g := graph.NewGraph("main")
+	g.AddBranch("feat-a", "main", "aaa", "bbb")
+	g.AddBranch("feat-b", "feat-a", "ccc", "ddd")
+	g.AddBranch("unrelated-1", "main", "eee", "fff")
+	return g
+}
+
+func TestResolveBranches_ScopeAll_OnlyIncludesCurrentLineage(t *testing.T) {
+	g := testGraphSiblingStacks()
+	// On feat-b: should get feat-a and feat-b, NOT unrelated-1
+	branches := ResolveBranches(g, "feat-b", ScopeAll)
+	if len(branches) != 2 {
+		t.Fatalf("expected 2 branches, got %d: %v", len(branches), branches)
+	}
+	for _, b := range branches {
+		if b == "unrelated-1" {
+			t.Errorf("should not include unrelated-1 in lineage of feat-b")
+		}
+	}
+}
+
+func TestResolveBranches_ScopeAll_OtherStack(t *testing.T) {
+	g := testGraphSiblingStacks()
+	// On unrelated-1: should get only unrelated-1, NOT feat-a or feat-b
+	branches := ResolveBranches(g, "unrelated-1", ScopeAll)
+	if len(branches) != 1 {
+		t.Fatalf("expected 1 branch, got %d: %v", len(branches), branches)
+	}
+	if branches[0] != "unrelated-1" {
+		t.Errorf("expected [unrelated-1], got %v", branches)
+	}
+}
+
+func TestResolveBranches_ScopeAll_SingleLineage(t *testing.T) {
 	g := testGraph()
 	branches := ResolveBranches(g, "feat-b", ScopeAll)
 	if len(branches) != 2 {
