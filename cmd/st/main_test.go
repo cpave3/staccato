@@ -3965,6 +3965,112 @@ func TestDetach(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestDeleteStack
+// ---------------------------------------------------------------------------
+
+func TestDeleteStack(t *testing.T) {
+	t.Run("deletes_entire_lineage_from_graph_preserves_root", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+		runSt(t, "append", "f3")
+		repo.CreateFile("f3.txt", "f3")
+		repo.AddAndCommit("f3 commit")
+
+		out := runSt(t, "delete-stack")
+
+		g := loadGraph(t, repo)
+		if _, ok := g.Branches["f1"]; ok {
+			t.Error("f1 should be removed from graph")
+		}
+		if _, ok := g.Branches["f2"]; ok {
+			t.Error("f2 should be removed from graph")
+		}
+		if _, ok := g.Branches["f3"]; ok {
+			t.Error("f3 should be removed from graph")
+		}
+		if g.Root != root {
+			t.Errorf("root = %q, want %q", g.Root, root)
+		}
+		assertContains(t, out, "Deleted stack")
+	})
+
+	t.Run("preserves_git_branches_by_default", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		runSt(t, "delete-stack")
+
+		// Git branches should still exist
+		if !repo.BranchExists("f1") {
+			t.Error("git branch f1 should still exist")
+		}
+		if !repo.BranchExists("f2") {
+			t.Error("git branch f2 should still exist")
+		}
+	})
+
+	t.Run("branches_flag_deletes_git_branches", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		runSt(t, "delete-stack", "--branches", "--force")
+
+		if repo.BranchExists("f1") {
+			t.Error("git branch f1 should be deleted")
+		}
+		if repo.BranchExists("f2") {
+			t.Error("git branch f2 should be deleted")
+		}
+	})
+
+	t.Run("errors_when_on_root_branch", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.Checkout(root)
+
+		out := runStExpectError(t, "delete-stack")
+		assertContains(t, out, "cannot delete-stack")
+	})
+
+	t.Run("checks_out_root_after_deletion", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1")
+		repo.AddAndCommit("f1 commit")
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2")
+		repo.AddAndCommit("f2 commit")
+
+		runSt(t, "delete-stack")
+
+		cur := getCurrentBranch(t, repo)
+		if cur != root {
+			t.Errorf("current branch = %q, want %q", cur, root)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // TestAttachFilterStacked
 // ---------------------------------------------------------------------------
 

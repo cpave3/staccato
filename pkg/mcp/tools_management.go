@@ -110,6 +110,78 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 		},
 	)
 
+	// st_delete_stack
+	s.AddTool(
+		mcp.NewTool("st_delete_stack",
+			mcp.WithDescription("Remove the current lineage from the stack graph. By default only modifies the graph (git branches kept). Use branches=true to also delete git branches."),
+			mcp.WithToolAnnotation(destructive()),
+			mcp.WithBoolean("branches", mcp.Description("Also delete the git branches")),
+			mcp.WithBoolean("force", mcp.Description("Force delete even if branches have unpushed commits")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			branches := req.GetBool("branches", false)
+			force := req.GetBool("force", false)
+
+			currentBranch, _ := sc.Git.GetCurrentBranch()
+			if currentBranch == sc.Graph.Root {
+				return mcp.NewToolResultError("cannot delete-stack while on the root branch"), nil
+			}
+
+			if _, exists := sc.Graph.GetBranch(currentBranch); !exists {
+				return mcp.NewToolResultError(fmt.Sprintf("current branch '%s' is not in the stack", currentBranch)), nil
+			}
+
+			lineage := restack.GetLineage(sc.Graph, currentBranch)
+			var toRemove []string
+			for _, b := range lineage {
+				if b != sc.Graph.Root {
+					toRemove = append(toRemove, b)
+				}
+			}
+
+			if len(toRemove) == 0 {
+				return mcp.NewToolResultText("No branches to remove."), nil
+			}
+
+			// Check for unpushed branches when deleting git branches
+			if branches {
+				hasRemote, _ := sc.Git.HasRemote()
+				if hasRemote && !force {
+					var unpushed []string
+					for _, b := range toRemove {
+						if !sc.Git.RemoteBranchExists(b) {
+							unpushed = append(unpushed, b)
+						}
+					}
+					if len(unpushed) > 0 {
+						return mcp.NewToolResultError(fmt.Sprintf("branches not pushed to remote: %v — use force=true to delete anyway", unpushed)), nil
+					}
+				}
+			}
+
+			// Remove from graph in reverse order (leaves first)
+			for i := len(toRemove) - 1; i >= 0; i-- {
+				sc.Graph.RemoveBranch(toRemove[i])
+			}
+
+			if err := sc.Save(); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("failed to save graph: %v", err)), nil
+			}
+
+			if err := sc.Git.CheckoutBranch(sc.Graph.Root); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("failed to checkout root: %v", err)), nil
+			}
+
+			if branches {
+				for _, b := range toRemove {
+					sc.Git.DeleteBranch(b, true)
+				}
+			}
+
+			return mcp.NewToolResultText(fmt.Sprintf("Deleted stack: removed %d branches from graph, now on '%s'", len(toRemove), sc.Graph.Root)), nil
+		},
+	)
+
 	// st_continue
 	s.AddTool(
 		mcp.NewTool("st_continue",
