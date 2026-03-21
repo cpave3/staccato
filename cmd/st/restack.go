@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/restack"
 )
 
@@ -52,6 +53,16 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 				lineageBranches = restack.GetAncestors(g, currentBranch)
 			}
 
+			// Fire pre-restack hook (can block)
+			hookRunner := hooks.NewRunner(repoPath)
+			if err := hookRunner.Fire(hooks.Context{
+				Event:    hooks.PreRestack,
+				RepoPath: repoPath,
+				Branch:   currentBranch,
+			}); err != nil {
+				return fmt.Errorf("pre-restack hook: %w", err)
+			}
+
 			printer.RestackStart(currentBranch)
 
 			// Create backup manager
@@ -71,6 +82,14 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 						Lineage: lineageBranches,
 					})
 					printer.ConflictDetected(result.ConflictsAt)
+
+					hookRunner.Fire(hooks.Context{
+						Event:    hooks.PostRestackConflict,
+						RepoPath: repoPath,
+						Branch:   currentBranch,
+						Data:     map[string]any{"conflict_branch": result.ConflictsAt},
+					})
+
 					return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
 				}
 
@@ -88,6 +107,13 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 			}
 
 			printer.RestackComplete(len(result.Completed))
+
+			hookRunner.Fire(hooks.Context{
+				Event:    hooks.PostRestack,
+				RepoPath: repoPath,
+				Branch:   currentBranch,
+				Data:     map[string]any{"restacked_count": len(result.Completed)},
+			})
 
 			return nil
 		},

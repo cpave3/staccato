@@ -12,6 +12,7 @@ import (
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/output"
 	"github.com/cpave3/staccato/pkg/restack"
 )
@@ -332,6 +333,12 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 				return fmt.Errorf("failed to save graph: %w", err)
 			}
 			printer.Success("Attached '%s' as child of '%s'", branchToAttach, m.selected)
+			hooks.NewRunner(repoPath).Fire(hooks.Context{
+				Event:    hooks.PostAttach,
+				RepoPath: repoPath,
+				Branch:   branchToAttach,
+				Data:     map[string]any{"parent": m.selected},
+			})
 			return nil
 		}
 
@@ -354,6 +361,12 @@ func doAttachRecursively(g *graph.Graph, gitRunner *git.Runner, repoPath string,
 		}
 
 		printer.Success("Attached '%s' as child of '%s'", branchToAttach, m.selected)
+		hooks.NewRunner(repoPath).Fire(hooks.Context{
+			Event:    hooks.PostAttach,
+			RepoPath: repoPath,
+			Branch:   branchToAttach,
+			Data:     map[string]any{"parent": m.selected},
+		})
 	}
 
 	return nil
@@ -512,5 +525,11 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 	}
 
 	printer.Success("Attached '%s' as child of '%s'", branchToAttach, parent)
+	hooks.NewRunner(repoPath).Fire(hooks.Context{
+		Event:    hooks.PostAttach,
+		RepoPath: repoPath,
+		Branch:   branchToAttach,
+		Data:     map[string]any{"parent": parent},
+	})
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/restack"
 )
 
@@ -105,6 +106,13 @@ The current branch and all downstream branches will be reparented and restacked.
 
 			// Checkout the newly inserted branch
 			git.CheckoutBranch(branchName)
+
+			hooks.NewRunner(repoPath).Fire(hooks.Context{
+				Event:    hooks.PostBranchCreate,
+				RepoPath: repoPath,
+				Branch:   branchName,
+				Data:     map[string]any{"parent": oldParent},
+			})
 
 			return nil
 		},

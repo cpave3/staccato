@@ -141,6 +141,62 @@ TUI commands require an interactive terminal (TTY). Use `st attach --auto` or `s
 - Trunk branches (`main`, `master`, `develop`, `trunk`) are auto-detected as root
 - Press `r` to manually set any branch as root
 
+## Hooks
+
+Staccato supports a hook system for triggering custom scripts on lifecycle events. Hooks are executable files placed in event-named directories:
+
+```
+~/.config/staccato/hooks/<event>/    # Global (all repos)
+<repo>/.staccato/hooks/<event>/      # Project (repo-specific, committable)
+```
+
+Both directories are scanned when an event fires — global hooks run first, then project hooks.
+
+### Example
+
+```bash
+# Get notified when a PR is created
+mkdir -p .staccato/hooks/post-pr-create
+cat > .staccato/hooks/post-pr-create/notify.sh << 'EOF'
+#!/bin/sh
+# Hook receives JSON context on stdin with event, branch, data fields
+BRANCH=$(echo "$ST_BRANCH" | tr -d '\n')
+echo "PR created for $BRANCH"
+EOF
+chmod +x .staccato/hooks/post-pr-create/notify.sh
+```
+
+### Available Events
+
+| Event                  | Fires when                                     |
+| ---------------------- | ---------------------------------------------- |
+| `post-pr-create`       | After `st pr make` creates a PR                |
+| `post-pr-view`         | After `st pr view` displays a PR               |
+| `post-branch-create`   | After `st new`, `st append`, `st insert`       |
+| `post-branch-delete`   | After `st delete` or `st delete-stack`          |
+| `post-restack`         | After `st restack` completes successfully      |
+| `post-restack-conflict`| When `st restack` stops on a conflict          |
+| `post-sync`            | After `st sync` completes                      |
+| `post-attach`          | After `st attach` adds a branch to the stack   |
+| `pre-sync`             | Before `st sync` begins (can block)            |
+| `pre-restack`          | Before `st restack` begins (can block)         |
+
+### Hook Context
+
+Each hook receives:
+- **stdin**: JSON payload with `event`, `repo_path`, `branch`, and event-specific `data`
+- **Environment variables**: `ST_EVENT`, `ST_REPO_PATH`, `ST_BRANCH`
+
+### Exit Codes
+
+| Exit Code | Meaning |
+| --------- | ------- |
+| 0         | Success — continue normally |
+| 2         | Block the operation (`pre-*` hooks only) |
+| Other     | Warning — print stderr and continue |
+
+Hooks have a 30-second timeout. MCP tools fire the same hooks as their CLI equivalents.
+
 ## Configuration
 
 By default, stack metadata is stored locally in `.git/stack/graph.json` (invisible to git, local-only).

@@ -27,6 +27,7 @@ st/
 │   ├── restack/           # Topological sort & restack engine
 │   ├── attach/            # Lazy attachment logic
 │   ├── forge/             # Forge detection (GitHub, etc.)
+│   ├── hooks/             # Hook discovery & execution engine
 │   └── output/            # CLI formatting utilities
 ├── .golangci.yml          # Linter config (govet, staticcheck, unused, ineffassign)
 ├── Taskfile.yml           # Task runner (task build/test/lint/check)
@@ -77,6 +78,17 @@ st/
 - `AttachBranch(g, branch, parent)`: Gets merge-base as BaseSHA, HEAD as HeadSHA
 - `IsBranchInGraph()` / `FindRoot()`: Graph traversal helpers
 - `GetUnattachedBranches()`: Branches not in graph
+
+#### pkg/hooks
+- `Event` type with constants: `PostPRCreate`, `PostPRView`, `PostBranchCreate`, `PostBranchDelete`, `PostRestack`, `PostRestackConflict`, `PostSync`, `PostAttach`, `PreSync`, `PreRestack`
+- `Context` struct: `Event`, `RepoPath`, `Branch`, `Data map[string]any` — marshalled as JSON to hook stdin
+- `Runner` struct: Created with `NewRunner(repoPath)`, discovers hooks from two directories:
+  - Global: `~/.config/staccato/hooks/<event>/`
+  - Project: `<repo>/.staccato/hooks/<event>/`
+- `Fire(ctx)`: Discovers all executable scripts for the event, runs each with JSON on stdin and env vars (`ST_EVENT`, `ST_REPO_PATH`, `ST_BRANCH`)
+- Exit codes: 0=success, 2=block (pre-hooks) or warn (post-hooks), other=warn and continue
+- 30-second timeout per script
+- Both CLI commands and MCP tool handlers fire hooks after their operations
 
 #### pkg/output
 - `Printer` struct with `verbose` flag

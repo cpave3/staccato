@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/forge"
+	"github.com/cpave3/staccato/pkg/hooks"
 )
 
 func prCmd() *cobra.Command {
@@ -27,7 +28,7 @@ func prMakeCmd() *cobra.Command {
 		Long: `Creates a pull request targeting the parent branch in the stack.
 This ensures PRs in a stack are chained correctly.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			g, gitRunner, _, _, err := getContext()
+			g, gitRunner, _, repoPath, err := getContext()
 			if err != nil {
 				return err
 			}
@@ -54,11 +55,22 @@ This ensures PRs in a stack are chained correctly.`,
 				}
 			}
 
-			return f.CreatePR(forge.PRCreateOpts{
+			if err := f.CreatePR(forge.PRCreateOpts{
 				Head: currentBranch,
 				Base: branchInfo.Parent,
 				Web:  web,
+			}); err != nil {
+				return err
+			}
+
+			hooks.NewRunner(repoPath).Fire(hooks.Context{
+				Event:    hooks.PostPRCreate,
+				RepoPath: repoPath,
+				Branch:   currentBranch,
+				Data:     map[string]any{"base": branchInfo.Parent, "web": web},
 			})
+
+			return nil
 		},
 	}
 
@@ -74,9 +86,14 @@ func prViewCmd() *cobra.Command {
 		Short: "View the PR for the current branch",
 		Long:  "Shows the pull request associated with the current branch.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, gitRunner, _, _, err := getContext()
+			_, gitRunner, _, repoPath, err := getContext()
 			if err != nil {
 				return err
+			}
+
+			currentBranch, err := gitRunner.GetCurrentBranch()
+			if err != nil {
+				return fmt.Errorf("failed to get current branch: %w", err)
 			}
 
 			f, err := forge.Detect(gitRunner)
@@ -84,9 +101,20 @@ func prViewCmd() *cobra.Command {
 				return err
 			}
 
-			return f.ViewPR(forge.PRViewOpts{
+			if err := f.ViewPR(forge.PRViewOpts{
 				Web: web,
+			}); err != nil {
+				return err
+			}
+
+			hooks.NewRunner(repoPath).Fire(hooks.Context{
+				Event:    hooks.PostPRView,
+				RepoPath: repoPath,
+				Branch:   currentBranch,
+				Data:     map[string]any{"web": web},
 			})
+
+			return nil
 		},
 	}
 

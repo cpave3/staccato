@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/cpave3/staccato/pkg/hooks"
 )
 
 func newCmd() *cobra.Command {
@@ -50,6 +51,13 @@ func newCmd() *cobra.Command {
 			}
 
 			printer.BranchCreated(branchName, g.Root)
+
+			hooks.NewRunner(repoPath).Fire(hooks.Context{
+				Event:    hooks.PostBranchCreate,
+				RepoPath: repoPath,
+				Branch:   branchName,
+				Data:     map[string]any{"parent": g.Root},
+			})
 
 			return nil
 		},

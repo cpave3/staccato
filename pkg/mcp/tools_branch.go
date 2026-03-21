@@ -6,6 +6,7 @@ import (
 
 	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/restack"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -36,6 +37,13 @@ func registerBranchTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 			if err := sc.Save(); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to save graph: %v", err)), nil
 			}
+
+			hooks.NewRunner(sc.RepoPath).Fire(hooks.Context{
+				Event:    hooks.PostBranchCreate,
+				RepoPath: sc.RepoPath,
+				Branch:   name,
+				Data:     map[string]any{"parent": sc.Graph.Root},
+			})
 
 			return mcp.NewToolResultText(fmt.Sprintf("Created branch '%s' from '%s'", name, sc.Graph.Root)), nil
 		},
@@ -72,6 +80,13 @@ func registerBranchTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 			if err := sc.Save(); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to save graph: %v", err)), nil
 			}
+
+			hooks.NewRunner(sc.RepoPath).Fire(hooks.Context{
+				Event:    hooks.PostBranchCreate,
+				RepoPath: sc.RepoPath,
+				Branch:   name,
+				Data:     map[string]any{"parent": parentBranch},
+			})
 
 			return mcp.NewToolResultText(fmt.Sprintf("Created branch '%s' as child of '%s'", name, parentBranch)), nil
 		},
@@ -137,6 +152,13 @@ func registerBranchTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 
 			backupMgr.CleanupStackBackups(affectedBranches)
 			sc.Git.CheckoutBranch(name)
+
+			hooks.NewRunner(sc.RepoPath).Fire(hooks.Context{
+				Event:    hooks.PostBranchCreate,
+				RepoPath: sc.RepoPath,
+				Branch:   name,
+				Data:     map[string]any{"parent": oldParent},
+			})
 
 			return mcp.NewToolResultText(fmt.Sprintf("Inserted '%s' before '%s', restacked %d branches", name, currentBranch, len(result.Completed))), nil
 		},

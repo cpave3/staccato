@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	stcontext "github.com/cpave3/staccato/pkg/context"
+	"github.com/cpave3/staccato/pkg/hooks"
 	stync "github.com/cpave3/staccato/pkg/sync"
 )
 
@@ -29,6 +30,17 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 
 			if dryRun {
 				printer.DryRunNotice()
+			}
+
+			// Fire pre-sync hook (can block), skip on dry-run
+			if !dryRun {
+				hookRunner := hooks.NewRunner(repoPath)
+				if err := hookRunner.Fire(hooks.Context{
+					Event:    hooks.PreSync,
+					RepoPath: repoPath,
+				}); err != nil {
+					return fmt.Errorf("pre-sync hook: %w", err)
+				}
 			}
 
 			printer.SyncFetching()
@@ -90,6 +102,19 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 
 			if err != nil {
 				return err
+			}
+
+			// Fire post-sync hook (skip on dry-run)
+			if !dryRun && result != nil {
+				hooks.NewRunner(repoPath).Fire(hooks.Context{
+					Event:    hooks.PostSync,
+					RepoPath: repoPath,
+					Data: map[string]any{
+						"merged_branches":  result.MergedBranches,
+						"pushed_branches":  result.PushedBranches,
+						"restacked_count":  result.RestackedCount,
+					},
+				})
 			}
 
 			return nil

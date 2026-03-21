@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	stcontext "github.com/cpave3/staccato/pkg/context"
+	"github.com/cpave3/staccato/pkg/hooks"
 	stync "github.com/cpave3/staccato/pkg/sync"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -23,6 +24,18 @@ func registerSyncTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			dryRun := req.GetBool("dry_run", false)
 			downOnly := req.GetBool("down_only", false)
+
+			hookRunner := hooks.NewRunner(sc.RepoPath)
+
+			// Fire pre-sync hook (can block), skip on dry-run
+			if !dryRun {
+				if err := hookRunner.Fire(hooks.Context{
+					Event:    hooks.PreSync,
+					RepoPath: sc.RepoPath,
+				}); err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("pre-sync hook: %v", err)), nil
+				}
+			}
 
 			result, err := stync.Run(sc, stync.Options{
 				DryRun:   dryRun,
@@ -51,6 +64,20 @@ func registerSyncTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 				// Return the structured result along with the error message
 				return mcp.NewToolResultError(fmt.Sprintf("%s\n\n%s", err.Error(), string(data))), nil
 			}
+
+			// Fire post-sync hook, skip on dry-run
+			if !dryRun {
+				hookRunner.Fire(hooks.Context{
+					Event:    hooks.PostSync,
+					RepoPath: sc.RepoPath,
+					Data: map[string]any{
+						"merged_branches": result.MergedBranches,
+						"pushed_branches": result.PushedBranches,
+						"restacked_count": result.RestackedCount,
+					},
+				})
+			}
+
 			return mcp.NewToolResultText(string(data)), nil
 		},
 	)

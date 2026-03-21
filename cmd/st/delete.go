@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/cpave3/staccato/pkg/hooks"
 )
 
 func deleteCmd() *cobra.Command {
@@ -68,6 +69,14 @@ func deleteCmd() *cobra.Command {
 			}
 
 			printer.Success("Deleted '%s' from stack", branchName)
+
+			hooks.NewRunner(repoPath).Fire(hooks.Context{
+				Event:    hooks.PostBranchDelete,
+				RepoPath: repoPath,
+				Branch:   branchName,
+				Data:     map[string]any{"parent": b.Parent},
+			})
+
 			return nil
 		},
 	}

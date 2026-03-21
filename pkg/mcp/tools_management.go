@@ -7,6 +7,7 @@ import (
 	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/attach"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/restack"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -56,6 +57,13 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 				return mcp.NewToolResultError(fmt.Sprintf("failed to save graph: %v", err)), nil
 			}
 
+			hooks.NewRunner(sc.RepoPath).Fire(hooks.Context{
+				Event:    hooks.PostAttach,
+				RepoPath: sc.RepoPath,
+				Branch:   branchName,
+				Data:     map[string]any{"parent": parent},
+			})
+
 			return mcp.NewToolResultText(fmt.Sprintf("Attached '%s' as child of '%s'", branchName, parent)), nil
 		},
 	)
@@ -85,6 +93,17 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 				lineageBranches = restack.GetAncestors(sc.Graph, currentBranch)
 			}
 
+			hookRunner := hooks.NewRunner(sc.RepoPath)
+
+			// Fire pre-restack hook (can block)
+			if err := hookRunner.Fire(hooks.Context{
+				Event:    hooks.PreRestack,
+				RepoPath: sc.RepoPath,
+				Branch:   currentBranch,
+			}); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("pre-restack hook: %v", err)), nil
+			}
+
 			backupMgr := backup.NewManager(sc.Git, sc.RepoPath)
 			engine := restack.NewEngine(sc.Git, backupMgr)
 			result, err := engine.RestackLineage(sc.Graph, currentBranch, lineageBranches)
@@ -93,6 +112,12 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 
 			if err != nil {
 				if result != nil && result.Conflicts {
+					hookRunner.Fire(hooks.Context{
+						Event:    hooks.PostRestackConflict,
+						RepoPath: sc.RepoPath,
+						Branch:   currentBranch,
+						Data:     map[string]any{"conflict_branch": result.ConflictsAt},
+					})
 					return mcp.NewToolResultError(fmt.Sprintf("conflict at '%s' — resolve and run st_continue", result.ConflictsAt)), nil
 				}
 				return mcp.NewToolResultError(fmt.Sprintf("restack failed: %v", err)), nil
@@ -106,6 +131,14 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 			if result != nil {
 				completed = len(result.Completed)
 			}
+
+			hookRunner.Fire(hooks.Context{
+				Event:    hooks.PostRestack,
+				RepoPath: sc.RepoPath,
+				Branch:   currentBranch,
+				Data:     map[string]any{"restacked_count": completed},
+			})
+
 			return mcp.NewToolResultText(fmt.Sprintf("Restacked %d branches", completed)), nil
 		},
 	)
@@ -143,6 +176,14 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 				return mcp.NewToolResultText("No branches to remove."), nil
 			}
 
+			// Capture parent info before removal for hooks
+			branchParents := make(map[string]string)
+			for _, b := range toRemove {
+				if info, exists := sc.Graph.GetBranch(b); exists {
+					branchParents[b] = info.Parent
+				}
+			}
+
 			// Check for unpushed branches when deleting git branches
 			if branches {
 				hasRemote, _ := sc.Git.HasRemote()
@@ -176,6 +217,16 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 				for _, b := range toRemove {
 					sc.Git.DeleteBranch(b, true)
 				}
+			}
+
+			hookRunner := hooks.NewRunner(sc.RepoPath)
+			for _, b := range toRemove {
+				hookRunner.Fire(hooks.Context{
+					Event:    hooks.PostBranchDelete,
+					RepoPath: sc.RepoPath,
+					Branch:   b,
+					Data:     map[string]any{"parent": branchParents[b]},
+				})
 			}
 
 			return mcp.NewToolResultText(fmt.Sprintf("Deleted stack: removed %d branches from graph, now on '%s'", len(toRemove), sc.Graph.Root)), nil

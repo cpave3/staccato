@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/restack"
 	"github.com/spf13/cobra"
 )
@@ -53,6 +54,14 @@ Use --branches to also delete the git branches.`,
 			// Print summary
 			printer.Println("Removing %d branch(es) from stack: %s", len(toRemove), strings.Join(toRemove, ", "))
 
+			// Capture parent info before removal for hooks
+			branchParents := make(map[string]string)
+			for _, b := range toRemove {
+				if info, exists := g.GetBranch(b); exists {
+					branchParents[b] = info.Parent
+				}
+			}
+
 			// When --branches is set, check for unpushed branches
 			if branches {
 				hasRemote, _ := gitRunner.HasRemote()
@@ -94,6 +103,17 @@ Use --branches to also delete the git branches.`,
 			}
 
 			printer.Success("Deleted stack (%d branches removed), now on '%s'", len(toRemove), g.Root)
+
+			hookRunner := hooks.NewRunner(repoPath)
+			for _, b := range toRemove {
+				hookRunner.Fire(hooks.Context{
+					Event:    hooks.PostBranchDelete,
+					RepoPath: repoPath,
+					Branch:   b,
+					Data:     map[string]any{"parent": branchParents[b]},
+				})
+			}
+
 			return nil
 		},
 	}
