@@ -84,8 +84,12 @@ func modifyCmd() *cobra.Command {
 
 				if restackErr != nil {
 					if result != nil && result.Conflicts {
+						// Save restack state so `st continue` knows which branches to continue
+						restack.SaveRestackState(repoPath, &restack.RestackState{
+							Lineage: allBranches,
+						})
 						printer.ConflictDetected(result.ConflictsAt)
-						return fmt.Errorf("conflict at '%s' — resolve and run 'st continue'", result.ConflictsAt)
+						return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
 					}
 					return fmt.Errorf("restack failed: %w", restackErr)
 				}

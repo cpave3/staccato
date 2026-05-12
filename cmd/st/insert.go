@@ -89,9 +89,13 @@ The current branch and all downstream branches will be reparented and restacked.
 			result, err := engine.Restack(g, branchName)
 			if err != nil {
 				if result.Conflicts {
-					printer.ConflictDetected(result.ConflictsAt)
-					return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
-				}
+						// Save restack state so st continue knows which branches to continue
+						restack.SaveRestackState(repoPath, &restack.RestackState{
+							Lineage: affectedBranches,
+						})
+						printer.ConflictDetected(result.ConflictsAt)
+						return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
+					}
 
 				// Restore backups on error
 				printer.Error("Restack failed, restoring from backups...")

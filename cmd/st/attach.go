@@ -502,7 +502,12 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 			result, err := engine.Restack(g, branchToAttach)
 			if err != nil {
 				if result.Conflicts {
-					return fmt.Errorf("conflict during restack at '%s'", result.ConflictsAt)
+					// Save restack state so `st continue` knows which branches to continue
+					restack.SaveRestackState(repoPath, &restack.RestackState{
+						Lineage: affectedBranches,
+					})
+					printer.ConflictDetected(result.ConflictsAt)
+					return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
 				}
 				backupMgr.RestoreStack(backups)
 				return fmt.Errorf("restack failed: %w", err)

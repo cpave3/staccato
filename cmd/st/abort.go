@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/restack"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,28 @@ func abortCmd() *cobra.Command {
 			// Abort the rebase
 			if err := gitRunner.RebaseAbort(); err != nil {
 				return fmt.Errorf("failed to abort rebase: %w", err)
+			}
+
+			// Try to restore branches from backups that were created during the restack
+			backupMgr := backup.NewManager(gitRunner, repoPath)
+			state, stateErr := restack.LoadRestackState(repoPath)
+			if stateErr == nil && state != nil && len(state.Lineage) > 0 {
+				for _, branch := range state.Lineage {
+					if branch == g.Root {
+						continue
+					}
+					backups, _ := backupMgr.ListBackups(branch)
+					if len(backups) > 0 {
+						if err := backupMgr.RestoreBackup(branch, backups[0]); err != nil {
+							printer.Warning("failed to restore %s from backup: %v", branch, err)
+						}
+					}
+					if b, ok := g.GetBranch(branch); ok {
+						headSHA, _ := gitRunner.GetCommitSHA(branch)
+						baseSHA, _ := gitRunner.GetCommitSHA(b.Parent)
+						g.UpdateBranch(branch, baseSHA, headSHA)
+					}
+				}
 			}
 
 			// Clear restack state
