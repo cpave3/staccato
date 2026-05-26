@@ -1,0 +1,76 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "command": "/home/cameron/.cargo/bin/cerberus session-start",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "command": "/home/cameron/Projects/staccato/.claude/hooks/legato-permission-request.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "command": "/home/cameron/.cargo/bin/cerberus track-file",
+            "type": "command"
+          },
+          {
+            "command": "/home/cameron/Projects/staccato/.claude/hooks/legato-post-tool-use.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "/home/cameron/Projects/staccato/.claude/hooks/legato-session-end.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "command": "/home/cameron/Projects/staccato/.claude/hooks/legato-stop.sh",
+            "type": "command"
+          },
+          {
+            "command": "/home/cameron/.cargo/bin/cerberus run standard --agent claude-code",
+            "type": "command",
+            "timeout": 300
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "/home/cameron/Projects/staccato/.claude/hooks/legato-prompt-submit.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

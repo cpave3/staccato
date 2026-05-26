@@ -1415,6 +1415,64 @@ func TestRestore(t *testing.T) {
 			}
 		}
 	})
+
+	// Cycle 4: restore --all preserves branch upstream tracking
+	t.Run("restore_all_preserves_upstream_tracking", func(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+
+	// Set up a remote so we can set upstream tracking
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// Build stack: main -> f1 -> f2
+	runSt(t, "new", "f1")
+	repo.CreateFile("f1.txt", "f1 file")
+			repo.CreateFile("shared.txt", "f1 content")
+	repo.AddAndCommit("f1 commit")
+	repo.RunGit("push", "-u", "origin", "f1")
+
+	runSt(t, "append", "f2")
+	repo.CreateFile("f2.txt", "f2 file")
+	repo.AddAndCommit("f2 commit")
+	repo.RunGit("push", "-u", "origin", "f2")
+
+	// Create conflicting change on root
+	repo.Checkout(root)
+	repo.CreateFile("shared.txt", "root content")
+	repo.AddAndCommit("root conflict")
+
+	// Restack -> conflict
+	repo.Checkout("f2")
+	runStExpectError(t, "restack")
+
+	// Verify branches have upstream tracking before restore
+	for _, branch := range []string{"f1", "f2", root} {
+		remote, err := repo.RunGit("config", "--get", fmt.Sprintf("branch.%s.remote", branch))
+		if err != nil {
+			t.Fatalf("branch %s expected to have tracking remote before restore", branch)
+		}
+		if strings.TrimSpace(remote) != "origin" {
+			t.Fatalf("branch %s tracking remote=%q, want origin", branch, remote)
+		}
+	}
+
+	// Restore --all
+	runSt(t, "restore", "--all")
+
+	// Assert upstream tracking survived for all branches
+	for _, branch := range []string{"f1", "f2", root} {
+		remote, err := repo.RunGit("config", "--get", fmt.Sprintf("branch.%s.remote", branch))
+		if err != nil {
+			t.Errorf("branch %s lost upstream tracking remote after restore", branch)
+			continue
+		}
+		if strings.TrimSpace(remote) != "origin" {
+			t.Errorf("branch %s tracking remote=%q after restore, want origin", branch, remote)
+		}
+	}
+})
 }
 
 // ---------------------------------------------------------------------------

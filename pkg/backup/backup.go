@@ -62,7 +62,9 @@ func (m *Manager) CreateBackup(branchName string) (string, error) {
 	return backupName, nil
 }
 
-// RestoreBackup restores a branch from a backup
+// RestoreBackup restores a branch from a backup.
+// It uses git update-ref to move the branch ref, which preserves upstream
+// tracking configuration (branch.<name>.remote / branch.<name>.merge).
 func (m *Manager) RestoreBackup(branchName, backupName string) error {
 	// Check if backup exists
 	exists, err := m.git.BranchExists(backupName)
@@ -73,42 +75,46 @@ func (m *Manager) RestoreBackup(branchName, backupName string) error {
 		return fmt.Errorf("backup %s does not exist", backupName)
 	}
 
+	// Resolve backup SHA
+	backupSHA, err := m.git.GetCommitSHA(backupName)
+	if err != nil {
+		return fmt.Errorf("failed to resolve backup SHA: %w", err)
+	}
+
 	// Get current branch
 	currentBranch, err := m.git.GetCurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
 	}
 
-	// If we're on the branch to restore, switch away first
-	if currentBranch == branchName {
-		// Try to switch to the backup branch temporarily
+	// If we're on the branch to restore, temporarily switch to the backup
+	// so that update-ref doesn't leave HEAD and working tree inconsistent
+	wasOnBranch := currentBranch == branchName
+	if wasOnBranch {
 		err = m.git.CheckoutBranch(backupName)
 		if err != nil {
-			return fmt.Errorf("failed to checkout backup branch: %w", err)
+			return fmt.Errorf("failed to checkout backup branch temporarily: %w", err)
 		}
 	}
 
-	// Delete the original branch
-	err = m.git.DeleteBranch(branchName, true)
+	// Move the branch ref to the backup SHA, preserving branch config (tracking, etc.)
+	_, err = m.git.Run("update-ref", "refs/heads/"+branchName, backupSHA)
 	if err != nil {
-		// Try to restore original state
-		m.git.CheckoutBranch(currentBranch)
-		return fmt.Errorf("failed to delete original branch: %w", err)
+		if wasOnBranch {
+			m.git.CheckoutBranch(currentBranch) // best-effort rollback
+		}
+		return fmt.Errorf("failed to update branch ref: %w", err)
 	}
 
-	// Rename backup to original name
-	err = m.git.CopyBranch(backupName, branchName)
-	if err != nil {
-		return fmt.Errorf("failed to rename backup: %w", err)
+	// If we were on the original branch, switch back so working tree is updated
+	if wasOnBranch {
+		err = m.git.CheckoutBranch(branchName)
+		if err != nil {
+			return fmt.Errorf("failed to checkout restored branch: %w", err)
+		}
 	}
 
-	// Switch back to the restored branch
-	err = m.git.CheckoutBranch(branchName)
-	if err != nil {
-		return fmt.Errorf("failed to checkout restored branch: %w", err)
-	}
-
-	// Delete the backup branch (now that we've copied it)
+	// Delete the backup branch
 	m.git.DeleteBranch(backupName, true)
 
 	return nil

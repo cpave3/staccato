@@ -81,6 +81,49 @@ func TestBackupManager_CanRestoreBackup(t *testing.T) {
 	}
 }
 
+func TestBackupManager_RestoreBackup_PreservesTracking(t *testing.T) {
+	tmpDir, gitRunner, manager := initTestRepo(t)
+
+	// Simulate upstream tracking by setting branch.main.remote and branch.main.merge
+	exec.Command("git", "-C", tmpDir, "config", "branch.main.remote", "origin").Run()
+	exec.Command("git", "-C", tmpDir, "config", "branch.main.merge", "refs/heads/main").Run()
+
+	// Verify tracking is set
+	remote, _ := gitRunner.Run("config", "--get", "branch.main.remote")
+	if strings.TrimSpace(remote) != "origin" {
+		t.Fatalf("expected tracking remote=origin, got %q", remote)
+	}
+
+	backupName, _ := manager.CreateBackup("main")
+	originalSHA, _ := gitRunner.GetBranchSHA("main")
+
+	// Make a new commit so restore actually does something
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("changed"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "change").Run()
+
+	err := manager.RestoreBackup("main", backupName)
+	if err != nil {
+		t.Fatalf("failed to restore backup: %v", err)
+	}
+
+	restoredSHA, _ := gitRunner.GetBranchSHA("main")
+	if restoredSHA != originalSHA {
+		t.Errorf("expected restored SHA to match original. Original: %s, Restored: %s", originalSHA, restoredSHA)
+	}
+
+	// Assert tracking config survived restore
+	remote, _ = gitRunner.Run("config", "--get", "branch.main.remote")
+	if strings.TrimSpace(remote) != "origin" {
+		t.Errorf("tracking remote lost after restore: expected %q, got %q", "origin", remote)
+	}
+	merge, _ := gitRunner.Run("config", "--get", "branch.main.merge")
+	if strings.TrimSpace(merge) != "refs/heads/main" {
+		t.Errorf("tracking merge lost after restore: expected %q, got %q", "refs/heads/main", merge)
+	}
+}
+
 func TestBackupManager_CanListBackups(t *testing.T) {
 	_, _, manager := initTestRepo(t)
 

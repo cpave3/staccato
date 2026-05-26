@@ -20,3 +20,8 @@ coverage.out
 # OS
 .DS_Store
 Thumbs.db
+
+# Cerberus
+.cerberus/cache/
+.cerberus/sessions/
+.chimera/

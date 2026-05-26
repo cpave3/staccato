@@ -1,0 +1,42 @@
+checks:
+  - id: go-build
+    match: ["**/*.go"]
+    cmd: "go build -o st ./cmd/st/"
+    scope: project
+    output_format: raw
+    tags: [build, go, fast]
+
+  - id: go-test
+    match: ["**/*.go"]
+    cmd: "go test ./... -count=1"
+    scope: project
+    output_format: raw
+    timeout_seconds: 180
+    tags: [test, go, slow]
+
+  - id: go-lint
+    match: ["**/*.go"]
+    cmd: "golangci-lint run ./..."
+    scope: project
+    output_format: raw
+    tags: [lint, go, fast]
+
+profiles:
+  quick:
+    description: "Build + lint"
+    additional_checks: [go-build, go-lint]
+    timeout_seconds: 60
+    fail_fast: true
+
+  standard:
+    description: "Build + lint + test"
+    include_profiles: [quick]
+    additional_checks: [go-test]
+    timeout_seconds: 300
+
+settings:
+  max_stop_iterations: 5
+  agent_format:
+    max_issues_per_check: 8
+    max_issues_total: 32
+  max_raw_lines: 40
