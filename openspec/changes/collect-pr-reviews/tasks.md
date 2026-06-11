@@ -2,7 +2,7 @@
 
 - [x] 1.1 Create `pkg/reviews/` package with data types: `FeedbackItem` (PR, Author, AuthorType, Type, File, Line, Body, DiffHunk, CreatedAt, InReplyTo, Replies), `ReviewResult` (Items, Scope, RepoOwner, RepoName)
 - [x] 1.2 Add `Scope` type with constants: `ScopeAll`, `ScopeCurrent`, `ScopeToCurrent`
-- [x] 1.3 Add bot filtering config: `BotSuffix = "[bot]"`, `ReviewBots = []string{"coderabbitai[bot]", "greptile-apps[bot]"}`
+- [x] 1.3 Add bot filtering config: `BotSuffix = "[bot]"`, `ReviewBots = []string{"coderabbitai[bot]", "cubic-dev-ai[bot]", "greptile-apps[bot]"}`. Bot accounts not in this allowlist are filtered from review output.
 
 ## 2. GitHub API Fetching
 

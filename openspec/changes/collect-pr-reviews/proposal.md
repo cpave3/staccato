@@ -7,7 +7,7 @@ When working with stacked PRs, review feedback is scattered across multiple GitH
 - Add `st reviews` CLI command that collects review comments from PRs associated with stack branches
 - Support three scopes: current branch (`--current`), ancestors up to current (`--to-current`), or the whole stack (default)
 - Fetch inline comments, review submissions, and general PR comments via `gh api`
-- Filter out bot noise (keep substantive review bots like coderabbit, greptile)
+- Filter out non-allowlisted bot comments; keep substantive review bots: `coderabbitai[bot]`, `cubic-dev-ai[bot]`, and `greptile-apps[bot]`
 - Thread reply comments under their parents
 - Output structured markdown with severity classification hints for AI consumption
 - Support `--out <path>` flag to write to disk; without it, output to stdout (useful for MCP where the AI agent receives output directly)

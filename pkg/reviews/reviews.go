@@ -22,8 +22,9 @@ const (
 const botSuffix = "[bot]"
 
 var reviewBots = map[string]bool{
-	"coderabbitai[bot]":   true,
-	"greptile-apps[bot]":  true,
+	"coderabbitai[bot]":  true,
+	"cubic-dev-ai[bot]":  true,
+	"greptile-apps[bot]": true,
 }
 
 // FeedbackItem represents a single review comment from a PR.
@@ -214,11 +215,11 @@ func truncateDiffHunk(hunk string, maxLines int) string {
 }
 
 var (
-	detailsBlockRe  = regexp.MustCompile(`(?s)<details>.*?</details>`)
-	htmlCommentRe   = regexp.MustCompile(`(?s)<!--.*?-->`)
-	orphanedTagRe   = regexp.MustCompile(`(?m)^\s*</?(details|blockquote|summary|sub)>?\s*$`)
-	htmlTagRe       = regexp.MustCompile(`</?(?:details|blockquote|summary|sub|h[1-6])[^>]*>`)
-	blankLinesRe    = regexp.MustCompile(`\n{3,}`)
+	detailsBlockRe = regexp.MustCompile(`(?s)<details>.*?</details>`)
+	htmlCommentRe  = regexp.MustCompile(`(?s)<!--.*?-->`)
+	orphanedTagRe  = regexp.MustCompile(`(?m)^\s*</?(details|blockquote|summary|sub)>?\s*$`)
+	htmlTagRe      = regexp.MustCompile(`</?(?:details|blockquote|summary|sub|h[1-6])[^>]*>`)
+	blankLinesRe   = regexp.MustCompile(`\n{3,}`)
 )
 
 // cleanBotBody strips boilerplate from bot review comments:

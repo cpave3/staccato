@@ -17,6 +17,7 @@ When the staccato MCP server is connected, use these tools directly:
 **Read-only (structured JSON output):**
 - `st_log` — stack tree structure
 - `st_status` — stack tree with PR status (number, state, checks, reviews)
+- `st_reviews` — stack PR review feedback; filters out non-allowlisted `[bot]` authors
 - `st_current` — current branch name, parent, whether in stack
 - `st_git_log` — git log (params: `range`, `limit`, `stat`)
 - `st_git_diff` — diff output (params: `staged`, `paths`)
@@ -57,6 +58,7 @@ st attach <branch> --parent <parent>          st detach <branch>
 st delete <branch> [-f]                       st log / st status
 st sync [--dry-run] [--down]                  st pr make [--web]
 st backup                                     st restore [branch] [--all]
+st reviews [--current] [--to-current] [--out path]
 st graph share / local / which
 ```
 
@@ -105,6 +107,15 @@ st_sync(down_only: true)     # pull only, don't push
 st_pr(stack: true)           # pushes all branches in lineage, returns base/head pairs
 # Then create PRs using gh or the forge — each PR targets its parent branch as base
 ```
+
+### Collect review feedback
+```
+st_reviews                   # MCP: review feedback for the current stack scope
+st reviews --current         # CLI: current branch's PR only
+st reviews --to-current      # CLI: ancestors through current branch
+```
+
+Review collection filters bot accounts by allowlist. Authors ending in `[bot]` are excluded unless they are `coderabbitai[bot]`, `cubic-dev-ai[bot]`, or `greptile-apps[bot]`.
 
 ### Adopt existing branches into a stack
 ```

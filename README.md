@@ -67,6 +67,7 @@ st sync --down
 | `st restore [branch]` | Restore from backup                                | `--all`                       |
 | `st pr make`          | Create a PR for the current branch                 |                               |
 | `st pr view`          | View the PR for the current branch                 |                               |
+| `st reviews`          | Collect stack PR review feedback                   | `--current`, `--to-current`, `--out <path>` |
 | `st status`           | Show PR status for the entire stack                |                               |
 | `st graph share`      | Share the graph via a pushable/fetchable git ref   |                               |
 | `st graph local`      | Move the graph back to local-only storage          |                               |
@@ -99,6 +100,12 @@ Use `--down` to pull and restack without pushing. Use `--dry-run` to see what wo
 ### `st restack`
 
 Rebases all branches in your lineage onto their parents. Use `--to-current` to restack only up to the current branch (useful when you're not at the tip of the stack).
+
+### `st reviews`
+
+Collects inline review comments, review submissions, and general PR comments from GitHub PRs for branches in the current stack scope.
+
+Bot comments are filtered by allowlist: authors whose login ends in `[bot]` are excluded unless the bot is explicitly allowed as a substantive review bot. The current allowlist is `coderabbitai[bot]`, `cubic-dev-ai[bot]`, and `greptile-apps[bot]`.
 
 ### TUI Navigation
 

@@ -9,7 +9,7 @@ The user's workflow description specifies fetching three GitHub API endpoints pe
 **Goals:**
 - Fetch all review comments for stack branches that have open PRs
 - Support three scopes: current branch only, ancestors-to-current, whole stack (default)
-- Filter bot noise while preserving substantive review bots (coderabbit, greptile)
+- Filter bot comments by allowlist, preserving substantive review bots (`coderabbitai[bot]`, `cubic-dev-ai[bot]`, `greptile-apps[bot]`)
 - Thread reply comments under their parent inline comments
 - Output structured markdown to stdout (for MCP/AI consumption) or to a file via `--out`
 - Expose as `st_reviews` MCP tool with scope and optional output path parameters
@@ -65,6 +65,6 @@ The user's workflow description specifies fetching three GitHub API endpoints pe
 
 - **[Rate limiting]** → Concurrency limit of 5 parallel `gh api` calls. GitHub's rate limit is 5000/hr for authenticated users; a 10-PR stack uses 30 calls.
 - **[gh CLI dependency]** → Already required for `st pr make` and `st sync`. Not a new dependency.
-- **[Large review volumes]** → Some PRs may have hundreds of comments (especially from bots). Bot filtering helps. The `--current` flag limits scope.
+- **[Large review volumes]** → Some PRs may have hundreds of comments (especially from bots). Bot comments whose login ends in `[bot]` are filtered unless they are explicitly allowlisted as substantive review bots. The `--current` flag limits scope.
 - **[No offline support]** → This command requires network access. Consistent with `st sync` and `st pr` which also require it.
 - **[Classification quality]** → Depends on consuming AI agent. The prompt hints improve consistency but aren't guaranteed. Acceptable since the raw data is always available.

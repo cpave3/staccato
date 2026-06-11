@@ -26,11 +26,12 @@ func TestFilterBots_KeepsReviewBots(t *testing.T) {
 	items := []FeedbackItem{
 		{Author: "coderabbitai[bot]", Body: "review comment"},
 		{Author: "greptile-apps[bot]", Body: "analysis"},
+		{Author: "cubic-dev-ai[bot]", Body: "fix this edge case"},
 		{Author: "dependabot[bot]", Body: "bump"},
 	}
 	filtered := FilterBots(items)
-	if len(filtered) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(filtered))
+	if len(filtered) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(filtered))
 	}
 	for _, item := range filtered {
 		if item.AuthorType != "Bot" {

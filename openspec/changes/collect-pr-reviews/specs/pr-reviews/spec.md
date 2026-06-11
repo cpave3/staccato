@@ -43,13 +43,15 @@ The system SHALL fetch general conversation comments from `GET /repos/{owner}/{r
 ### Requirement: Bot filtering
 The system SHALL filter out comments from bot accounts (usernames ending in `[bot]`) unless the bot is in the allowlist of substantive review bots.
 
+The review bot allowlist SHALL include `coderabbitai[bot]`, `cubic-dev-ai[bot]`, and `greptile-apps[bot]`.
+
 #### Scenario: Filter generic bot comments
 - **WHEN** a comment author's login ends with `[bot]`
 - **AND** the author is NOT in the review bot allowlist
 - **THEN** the system SHALL exclude that comment from the output
 
 #### Scenario: Keep substantive review bot comments
-- **WHEN** a comment author is `coderabbitai[bot]` or `greptile-apps[bot]`
+- **WHEN** a comment author is `coderabbitai[bot]`, `cubic-dev-ai[bot]`, or `greptile-apps[bot]`
 - **THEN** the system SHALL include that comment in the output
 - **AND** SHALL mark it with author type `Bot`
 
