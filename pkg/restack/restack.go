@@ -268,6 +268,15 @@ func (e *Engine) restackBranches(g *graph.Graph, branches []string) (*Result, er
 		// one ensures minimal commit replay in both scenarios.
 		var rebaseErr error
 		upstream := b.BaseSHA
+		// A fork-point is only usable if it's in the branch's history;
+		// otherwise upstream..branch spans unrelated commits and the rebase
+		// replays history that was never part of this branch.
+		if upstream != "" {
+			isAnc, err := e.git.IsAncestor(upstream, branch)
+			if err != nil || !isAnc {
+				upstream = ""
+			}
+		}
 		mergeBase, mbErr := e.git.GetMergeBase(branch, b.Parent)
 		if mbErr == nil && mergeBase != "" {
 			if upstream == "" {

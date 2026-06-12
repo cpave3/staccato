@@ -1790,6 +1790,69 @@ func TestSyncDetectsSquashMergeWithAdvancedTrunk(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestSyncRestackIgnoresForeignBaseSHA
+// ---------------------------------------------------------------------------
+// Regression: if a branch's recorded base_sha points at a commit that isn't
+// in the branch's history (e.g. metadata recorded from another branch), the
+// fork-point picker kept it, and `rebase --onto parent <base_sha>` replayed
+// large stretches of mainline history instead of just the branch's own
+// commits, conflicting. A fork-point candidate must be an ancestor of the
+// branch to be usable.
+
+func TestSyncRestackIgnoresForeignBaseSHA(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+
+	repo.CreateFile("f.txt", "v0\n")
+	repo.AddAndCommit("f v0")
+
+	// Side branch from this point; its head is NOT an ancestor of m1.
+	repo.RunGit("checkout", "-b", "foreign")
+	repo.CreateFile("foreign.txt", "foreign\n")
+	repo.AddAndCommit("foreign commit")
+	foreignSHA := repo.HeadSHA()
+	repo.Checkout(root)
+
+	// Two sequential edits to the same file on trunk: replaying the first
+	// edit on top of the second is guaranteed to conflict.
+	repo.WriteFile("f.txt", "v1\n")
+	repo.AddAndCommit("f v1")
+	repo.WriteFile("f.txt", "v2\n")
+	repo.AddAndCommit("f v2")
+	repo.RunGit("push", "-u", "origin", root)
+
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1\n")
+	repo.AddAndCommit("m1 commit")
+
+	// Corrupt the graph: point m1's base_sha at the foreign branch head.
+	sc, err := stcontext.Load(repo.Dir)
+	if err != nil {
+		t.Fatalf("load context: %v", err)
+	}
+	sc.Graph.Branches["m1"].BaseSHA = foreignSHA
+	if err := sc.Save(); err != nil {
+		t.Fatalf("save graph: %v", err)
+	}
+
+	runSt(t, "-v", "sync", "--down")
+
+	// m1 should sit directly on trunk with only its own commit — the trunk
+	// edits and the foreign commit must not have been replayed.
+	mergeBase, _ := repo.RunGit("merge-base", "m1", root)
+	rootSHA, _ := repo.RunGit("rev-parse", root)
+	if mergeBase != rootSHA {
+		t.Errorf("m1 should be based on trunk %s, merge-base = %s", rootSHA, mergeBase)
+	}
+	count, _ := repo.RunGit("rev-list", "--count", root+"..m1")
+	if count != "1" {
+		t.Errorf("m1 should have exactly its own commit on top of trunk, got %s", count)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // TestSyncMultipleMergedBranches
 // ---------------------------------------------------------------------------
 
