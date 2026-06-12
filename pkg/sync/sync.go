@@ -218,8 +218,8 @@ func DetectMergedBranches(g *graph.Graph, gitRunner *git.Runner, trunk string) (
 		}
 
 		if !isMerged && !gitRunner.RemoteBranchExists(branch) {
-			diffEmpty, err := gitRunner.DiffIsEmpty("origin/"+trunk, branch)
-			if err == nil && diffEmpty {
+			noChanges, err := gitRunner.MergeAddsNoChanges("origin/"+trunk, branch)
+			if err == nil && noChanges {
 				isMerged = true
 			}
 		}

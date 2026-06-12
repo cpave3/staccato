@@ -1660,6 +1660,136 @@ func TestSyncDetectsSquashMerge(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestSyncDetectsStackedSquashMerges
+// ---------------------------------------------------------------------------
+// Regression: with main <- m1 <- m2 <- m3 where m1 AND m2 are squash-merged,
+// trunk contains m2's changes that aren't in m1, so a plain diff between
+// trunk and m1 is non-empty and m1 escaped merged detection. Sync then
+// replayed m1's already-merged commits onto main and hit conflicts.
+
+func TestSyncDetectsStackedSquashMerges(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	// m1 and m2 get two commits each so their squash commits have different
+	// patch-ids than the originals — rebase can't silently drop the replayed
+	// commits, which is what makes the real-world case conflict.
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1 line1\n")
+	repo.AddAndCommit("m1 commit 1")
+	repo.WriteFile("m1.txt", "m1 line1\nm1 line2\n")
+	repo.AddAndCommit("m1 commit 2")
+	runSt(t, "append", "m2")
+	repo.CreateFile("m2.txt", "m2 line1\n")
+	repo.AddAndCommit("m2 commit 1")
+	repo.WriteFile("m2.txt", "m2 line1\nm2 line2\n")
+	repo.AddAndCommit("m2 commit 2")
+	runSt(t, "append", "m3")
+	repo.CreateFile("m3.txt", "m3\n")
+	repo.AddAndCommit("m3 commit")
+
+	repo.RunGit("push", "origin", "m1")
+	repo.RunGit("push", "origin", "m2")
+
+	// Simulate GitHub squash-merging m1 then m2 into main.
+	repo.Checkout(root)
+	if out, err := repo.RunGit("merge", "--squash", "m1"); err != nil {
+		t.Fatalf("squash merge m1: %v\n%s", err, out)
+	}
+	repo.RunGit("commit", "-m", "m1 (squash)")
+	if out, err := repo.RunGit("merge", "--squash", "m2"); err != nil {
+		t.Fatalf("squash merge m2: %v\n%s", err, out)
+	}
+	repo.RunGit("commit", "-m", "m2 (squash)")
+	repo.RunGit("push", "origin", root)
+	originDir := repo.OriginDir()
+	runGitInDir(t, originDir, "branch", "-D", "m1")
+	runGitInDir(t, originDir, "branch", "-D", "m2")
+
+	// Sync from the top of the stack.
+	repo.Checkout("m3")
+	runSt(t, "-v", "sync", "--down")
+
+	g := loadGraph(t, repo)
+	if _, ok := g.Branches["m1"]; ok {
+		t.Error("m1 should have been removed from graph")
+	}
+	if _, ok := g.Branches["m2"]; ok {
+		t.Error("m2 should have been removed from graph")
+	}
+	if repo.BranchExists("m1") {
+		t.Error("m1 local branch should have been deleted")
+	}
+	if repo.BranchExists("m2") {
+		t.Error("m2 local branch should have been deleted")
+	}
+
+	m3, ok := g.Branches["m3"]
+	if !ok {
+		t.Fatal("m3 should still be in graph")
+	}
+	if m3.Parent != root {
+		t.Errorf("m3 parent = %q, want %q", m3.Parent, root)
+	}
+
+	// m3 should sit directly on the new trunk with only its own commit.
+	mergeBase, _ := repo.RunGit("merge-base", "m3", root)
+	rootSHA, _ := repo.RunGit("rev-parse", root)
+	if mergeBase != rootSHA {
+		t.Errorf("m3 should be restacked onto %s, merge-base = %s", rootSHA, mergeBase)
+	}
+	count, _ := repo.RunGit("rev-list", "--count", root+"..m3")
+	if count != "1" {
+		t.Errorf("m3 should have exactly its own commit on top of trunk, got %s", count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSyncDetectsSquashMergeWithAdvancedTrunk
+// ---------------------------------------------------------------------------
+// Regression: a squash-merged branch escaped detection whenever any other
+// commit landed on trunk after the merge, because the diff between trunk and
+// the branch was no longer empty.
+
+func TestSyncDetectsSquashMergeWithAdvancedTrunk(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	runSt(t, "new", "m1")
+	repo.CreateFile("m1.txt", "m1 line1\n")
+	repo.AddAndCommit("m1 commit 1")
+	repo.WriteFile("m1.txt", "m1 line1\nm1 line2\n")
+	repo.AddAndCommit("m1 commit 2")
+	repo.RunGit("push", "origin", "m1")
+
+	// Squash-merge m1, then land an unrelated commit on trunk.
+	repo.Checkout(root)
+	if out, err := repo.RunGit("merge", "--squash", "m1"); err != nil {
+		t.Fatalf("squash merge m1: %v\n%s", err, out)
+	}
+	repo.RunGit("commit", "-m", "m1 (squash)")
+	repo.CreateFile("other.txt", "unrelated\n")
+	repo.AddAndCommit("unrelated change")
+	repo.RunGit("push", "origin", root)
+	runGitInDir(t, repo.OriginDir(), "branch", "-D", "m1")
+
+	runSt(t, "-v", "sync", "--down")
+
+	if graphContains(t, repo, "m1") {
+		t.Error("m1 should have been removed from graph after squash merge detection")
+	}
+	if repo.BranchExists("m1") {
+		t.Error("m1 local branch should have been deleted")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // TestSyncMultipleMergedBranches
 // ---------------------------------------------------------------------------
 

@@ -197,6 +197,33 @@ func (r *Runner) DiffIsEmpty(a, b string) (bool, error) {
 	return strings.TrimSpace(output) == "", nil
 }
 
+// MergeAddsNoChanges reports whether merging branch into target would produce
+// no tree changes — i.e. all of branch's changes are already in target. Unlike
+// DiffIsEmpty, this detects squash-merged branches even when target has picked
+// up other changes since (e.g. another stacked branch squash-merged on top).
+func (r *Runner) MergeAddsNoChanges(target, branch string) (bool, error) {
+	cmd := exec.Command("git", "merge-tree", "--write-tree", target, branch)
+	cmd.Dir = r.repoPath
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// Exit code 1 means the merge has conflicts: branch is not merged.
+			return false, nil
+		}
+		// merge-tree --write-tree requires git >= 2.38; fall back to the
+		// tree-identity check on older gits.
+		return r.DiffIsEmpty(target, branch)
+	}
+
+	// First output line is the OID of the merged tree.
+	mergedTree := strings.TrimSpace(strings.SplitN(string(output), "\n", 2)[0])
+	targetTree, err := r.Run("rev-parse", target+"^{tree}")
+	if err != nil {
+		return false, err
+	}
+	return mergedTree == targetTree, nil
+}
+
 // FastForwardBranch updates a branch ref to point to target without checkout
 func (r *Runner) FastForwardBranch(branch, target string) error {
 	sha, err := r.GetCommitSHA(target)
