@@ -9,9 +9,11 @@ import (
 
 // PRCreateOpts holds options for creating a pull request.
 type PRCreateOpts struct {
-	Head string
-	Base string
-	Web  bool
+	Head        string
+	Base        string
+	Web         bool
+	Title       string
+	Description string
 }
 
 // PRViewOpts holds options for viewing a pull request.

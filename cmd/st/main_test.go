@@ -2593,6 +2593,23 @@ func TestPR(t *testing.T) {
 		assertContains(t, out, "not in the stack")
 	})
 
+	t.Run("make_accepts_title_and_description_flags", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		repo.RunGit("remote", "add", "origin", "https://github.com/user/repo.git")
+		repo.CreateBranch("untracked")
+		// Should still error for branch not in stack, proving flags parse
+		out := runStExpectError(t, "pr", "make", "--title", "My PR", "--description", "Details here")
+		assertContains(t, out, "not in the stack")
+	})
+
+	t.Run("make_accepts_short_flags", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		repo.RunGit("remote", "add", "origin", "https://github.com/user/repo.git")
+		repo.CreateBranch("untracked")
+		out := runStExpectError(t, "pr", "make", "-t", "Short Title", "-d", "Short desc")
+		assertContains(t, out, "not in the stack")
+	})
+
 	t.Run("make_errors_when_no_remote", func(t *testing.T) {
 		setupRepoWithStack(t)
 		runSt(t, "new", "f1")

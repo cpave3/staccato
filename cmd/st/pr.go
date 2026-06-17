@@ -21,6 +21,8 @@ func prCmd() *cobra.Command {
 
 func prMakeCmd() *cobra.Command {
 	var web bool
+	var title string
+	var description string
 
 	cmd := &cobra.Command{
 		Use:   "make",
@@ -56,9 +58,11 @@ This ensures PRs in a stack are chained correctly.`,
 			}
 
 			if err := f.CreatePR(forge.PRCreateOpts{
-				Head: currentBranch,
-				Base: branchInfo.Parent,
-				Web:  web,
+				Head:        currentBranch,
+				Base:        branchInfo.Parent,
+				Web:         web,
+				Title:       title,
+				Description: description,
 			}); err != nil {
 				return err
 			}
@@ -67,7 +71,7 @@ This ensures PRs in a stack are chained correctly.`,
 				Event:    hooks.PostPRCreate,
 				RepoPath: repoPath,
 				Branch:   currentBranch,
-				Data:     map[string]any{"base": branchInfo.Parent, "web": web},
+				Data:     map[string]any{"base": branchInfo.Parent, "web": web, "title": title, "description": description},
 			})
 
 			return nil
@@ -75,6 +79,8 @@ This ensures PRs in a stack are chained correctly.`,
 	}
 
 	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open in browser")
+	cmd.Flags().StringVarP(&title, "title", "t", "", "PR title")
+	cmd.Flags().StringVarP(&description, "description", "d", "", "PR description")
 	return cmd
 }
 

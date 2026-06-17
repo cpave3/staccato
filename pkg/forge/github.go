@@ -28,6 +28,12 @@ func (g *GitHub) CreatePR(opts PRCreateOpts) error {
 	if opts.Web {
 		args = append(args, "-w")
 	}
+	if opts.Title != "" {
+		args = append(args, "--title", opts.Title)
+	}
+	if opts.Description != "" {
+		args = append(args, "--body", opts.Description)
+	}
 
 	cmd := exec.Command("gh", args...)
 	cmd.Stdin = os.Stdin
