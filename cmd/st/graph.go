@@ -28,7 +28,7 @@ func graphShareCmd() *cobra.Command {
 		Short: "Share the graph via a git ref (pushable/fetchable)",
 		Long:  "Moves the local graph into a git ref so it can be pushed and fetched by teammates.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, gitRunner, _, repoPath, err := getContext()
+			_, gitRunner, _, _, err := getContext()
 			if err != nil {
 				return err
 			}
@@ -43,7 +43,11 @@ func graphShareCmd() *cobra.Command {
 				return fmt.Errorf("graph is already shared (stored at %s)", userRef)
 			}
 
-			localPath := filepath.Join(repoPath, graph.DefaultGraphPath)
+			gitDir, err := gitRunner.GitCommonDir()
+			if err != nil || gitDir == "" {
+				return fmt.Errorf("failed to resolve git directory: %w", err)
+			}
+			localPath := filepath.Join(gitDir, "stack", "graph.json")
 			data, err := os.ReadFile(localPath)
 			if err != nil {
 				return fmt.Errorf("no local graph found at %s", graph.DefaultGraphPath)
@@ -98,7 +102,7 @@ func graphLocalCmd() *cobra.Command {
 				return fmt.Errorf("failed to read shared ref: %w", err)
 			}
 
-			localPath := filepath.Join(sc.RepoPath, graph.DefaultGraphPath)
+			localPath := filepath.Join(sc.GitDir(), "stack", "graph.json")
 			dir := filepath.Dir(localPath)
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)

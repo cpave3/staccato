@@ -1241,6 +1241,60 @@ func TestAttach(t *testing.T) {
 			t.Errorf("manual-branch parent = %q, want %q", g.Branches["manual-branch"].Parent, root)
 		}
 	})
+
+	t.Run("attach_works_in_worktree", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+
+		// Create a tracked branch in the main repo first
+		runSt(t, "new", "f1")
+
+		// Create an untracked branch manually on top of root
+		repo.Checkout(root)
+		repo.CreateBranch("manual-branch")
+		repo.CreateFile("manual.txt", "manual")
+		repo.AddAndCommit("manual commit")
+		repo.Checkout(root)
+
+		// Create a worktree at HEAD — .git is a file here, not a directory
+		wtDir, err := repo.AddWorktree("wt")
+		if err != nil {
+			t.Fatalf("AddWorktree: %v", err)
+		}
+		defer os.RemoveAll(wtDir)
+
+		// Switch to the worktree and run attach from there.
+		// This reproduces the exact bug: mkdir <worktree>/.git fails because
+		// .git is a file in worktrees.
+		oldWd, _ := os.Getwd()
+		if err := os.Chdir(wtDir); err != nil {
+			t.Fatalf("chdir to worktree: %v", err)
+		}
+		t.Cleanup(func() {
+			os.Chdir(oldWd)
+		})
+
+		// Checkout the manual branch in the worktree so attach targets it
+		wtCmd := exec.Command("git", "checkout", "manual-branch")
+		wtCmd.Dir = wtDir
+		if out, err := wtCmd.CombinedOutput(); err != nil {
+			t.Fatalf("checkout manual-branch in worktree: %v\n%s", err, out)
+		}
+
+		// Attach --auto should succeed, not fail with "not a directory"
+		out := runSt(t, "attach", "--auto")
+		if strings.Contains(out, "not a directory") {
+			t.Fatalf("attach failed in worktree with 'not a directory':\n%s", out)
+		}
+
+		// Verify the branch is in the graph (loaded from the worktree's git dir)
+		sc, err := stcontext.Load(wtDir)
+		if err != nil {
+			t.Fatalf("Load from worktree: %v", err)
+		}
+		if _, ok := sc.Graph.Branches["manual-branch"]; !ok {
+			t.Error("manual-branch should be in graph after attach --auto in worktree")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

@@ -150,7 +150,7 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 				result.Conflicts = true
 				result.ConflictsAt = restackResult.ConflictsAt
 				// Save restack state so `st continue` can resume
-				restack.SaveRestackState(sc.RepoPath, &restack.RestackState{
+				restack.SaveRestackState(sc.Git, &restack.RestackState{
 					Lineage: lineage,
 				})
 				sc.Save()

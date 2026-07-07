@@ -1,8 +1,12 @@
 package restack
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
+	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
 )
 
@@ -311,4 +315,67 @@ func indexOf(slice []string, item string) int {
 		}
 	}
 	return -1
+}
+
+// ---------------------------------------------------------------------------
+// RestackState worktree tests
+// ---------------------------------------------------------------------------
+
+func TestSaveLoadClearRestackState_Worktree(t *testing.T) {
+	// Create a temp git repo with a commit
+	tmpDir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test User"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	os.WriteFile(filepath.Join(tmpDir, "f.txt"), []byte("x"), 0644)
+	for _, args := range [][]string{
+		{"add", "."},
+		{"commit", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Create a worktree — .git is a file here, not a directory
+	wtDir := filepath.Join(tmpDir, "..", "wt-"+filepath.Base(tmpDir))
+	cmd := exec.Command("git", "worktree", "add", wtDir, "HEAD")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %v\n%s", err, out)
+	}
+	defer os.RemoveAll(wtDir)
+
+	runner := git.NewRunner(wtDir)
+
+	// Save should not fail with "not a directory"
+	state := &RestackState{Lineage: []string{"main", "f1", "f2"}}
+	if err := SaveRestackState(runner, state); err != nil {
+		t.Fatalf("SaveRestackState in worktree: %v", err)
+	}
+
+	// Load should round-trip
+	loaded, err := LoadRestackState(runner)
+	if err != nil {
+		t.Fatalf("LoadRestackState in worktree: %v", err)
+	}
+	if len(loaded.Lineage) != 3 || loaded.Lineage[2] != "f2" {
+		t.Errorf("unexpected lineage: %v", loaded.Lineage)
+	}
+
+	// Clear should remove the file without error
+	ClearRestackState(runner)
+	if _, err := LoadRestackState(runner); err == nil {
+		t.Error("expected error after ClearRestackState")
+	}
 }

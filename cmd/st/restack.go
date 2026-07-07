@@ -78,7 +78,7 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 			if err != nil {
 				if result.Conflicts {
 					// Save restack state so continue knows the lineage
-					restack.SaveRestackState(repoPath, &restack.RestackState{
+					restack.SaveRestackState(git, &restack.RestackState{
 						Lineage: lineageBranches,
 					})
 					printer.ConflictDetected(result.ConflictsAt)
@@ -101,7 +101,7 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 			}
 
 			// Cleanup backups and restack state on success
-			restack.ClearRestackState(repoPath)
+			restack.ClearRestackState(git)
 			if len(result.Backups) > 0 {
 				backupMgr.CleanupStackBackups(lineageBranches)
 			}

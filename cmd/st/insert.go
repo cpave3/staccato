@@ -90,7 +90,7 @@ The current branch and all downstream branches will be reparented and restacked.
 			if err != nil {
 				if result.Conflicts {
 						// Save restack state so st continue knows which branches to continue
-						restack.SaveRestackState(repoPath, &restack.RestackState{
+						restack.SaveRestackState(git, &restack.RestackState{
 							Lineage: affectedBranches,
 						})
 						printer.ConflictDetected(result.ConflictsAt)

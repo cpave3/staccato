@@ -3,6 +3,7 @@ package git
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -14,6 +15,11 @@ type Runner struct {
 // NewRunner creates a new git runner for the specified repository
 func NewRunner(repoPath string) *Runner {
 	return &Runner{repoPath: repoPath}
+}
+
+// RepoPath returns the repository path the runner was created with.
+func (r *Runner) RepoPath() string {
+	return r.repoPath
 }
 
 // Run executes a git command and returns the output
@@ -267,6 +273,30 @@ func (r *Runner) DeleteBranch(name string, force bool) error {
 // GetUserEmail returns the configured git user.email.
 func (r *Runner) GetUserEmail() (string, error) {
 	return r.Run("config", "user.email")
+}
+
+// GitDir returns the absolute path to the repository's git directory.
+// In a normal repo this is <repo>/.git; in a worktree it is the per-worktree
+// gitdir (e.g. <main>/.git/worktrees/<name>). The returned path is always a
+// real directory, so files like stack/graph.json can be created under it
+// regardless of whether the working tree's .git entry is a file or a directory.
+func (r *Runner) GitDir() (string, error) {
+	return r.Run("rev-parse", "--absolute-git-dir")
+}
+
+// GitCommonDir returns the absolute path to the common git directory shared
+// across all worktrees (the main repo's .git). Useful for refs and config
+// that should be shared rather than per-worktree. The returned path is
+// absolute (git rev-parse --git-common-dir can be relative in older gits).
+func (r *Runner) GitCommonDir() (string, error) {
+	dir, err := r.Run("rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(r.repoPath, dir)
+	}
+	return dir, nil
 }
 
 // GetRemoteURL returns the URL of the named remote

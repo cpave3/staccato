@@ -259,3 +259,62 @@ func TestLoad_LegacyRefMigratesToPerUser(t *testing.T) {
 		t.Error("legacy ref should be deleted after migration")
 	}
 }
+
+// --- Worktree tests ---
+
+func TestLoad_Save_Worktree(t *testing.T) {
+	repo, root := setupRepo(t)
+	defer repo.Cleanup()
+
+	// Write a graph to the main repo's common git dir so the worktree can see it.
+	mainGitDir := repo.GitDir()
+	g := graph.NewGraph(root)
+	g.AddBranch("feature-a", root, "abc123", "def456")
+	graphPath := filepath.Join(mainGitDir, "stack", "graph.json")
+	if err := g.Save(graphPath); err != nil {
+		t.Fatalf("Save graph: %v", err)
+	}
+
+	// Create a worktree on a new branch — in a worktree, .git is a file,
+	// not a directory.
+	wtDir, err := repo.AddWorktree("wt")
+	if err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	defer os.RemoveAll(wtDir)
+
+	// Load from the worktree — should read the graph from the common git dir,
+	// not the per-worktree git dir.
+	sc, err := Load(wtDir)
+	if err != nil {
+		t.Fatalf("Load from worktree: %v", err)
+	}
+	// Root should be the original root, not "wt" — the graph is shared.
+	if sc.Graph.Root != root {
+		t.Errorf("Root = %q, want %q", sc.Graph.Root, root)
+	}
+	if _, ok := sc.Graph.Branches["feature-a"]; !ok {
+		t.Error("expected feature-a from main repo in worktree graph")
+	}
+
+	// Save should persist to the common git dir (shared across worktrees),
+	// not the per-worktree git dir.
+	sc.Graph.AddBranch("wt-branch", root, "abc", "def")
+	if err := sc.Save(); err != nil {
+		t.Fatalf("Save in worktree: %v", err)
+	}
+
+	// Verify the graph file is in the common git dir.
+	wtGitDir := git.NewRunner(wtDir)
+	commonDir, err := wtGitDir.GitCommonDir()
+	if err != nil {
+		t.Fatalf("GitCommonDir: %v", err)
+	}
+	loaded, err := graph.LoadGraph(filepath.Join(commonDir, "stack", "graph.json"))
+	if err != nil {
+		t.Fatalf("LoadGraph from common git dir: %v", err)
+	}
+	if _, ok := loaded.GetBranch("wt-branch"); !ok {
+		t.Error("expected wt-branch in graph saved from worktree")
+	}
+}

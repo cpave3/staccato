@@ -426,8 +426,8 @@ func TestRestoreStack(t *testing.T) {
 }
 
 func TestGetBackupPath(t *testing.T) {
-	path := GetBackupPath("/repo")
-	expected := filepath.Join("/repo", ".git", "stack", "backups")
+	path := GetBackupPath("/repo/.git")
+	expected := filepath.Join("/repo/.git", "stack", "backups")
 	if path != expected {
 		t.Errorf("GetBackupPath = %q, want %q", path, expected)
 	}

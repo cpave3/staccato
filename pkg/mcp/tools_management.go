@@ -253,13 +253,13 @@ func registerManagementTools(s *server.MCPServer, sc *stcontext.StaccatoContext)
 
 			// Load restack state to get lineage info
 			var lineage []string
-			state, stateErr := restack.LoadRestackState(sc.RepoPath)
+			state, stateErr := restack.LoadRestackState(sc.Git)
 			if stateErr == nil && state != nil {
 				lineage = state.Lineage
 			}
 
 			result, err := engine.Continue(sc.Graph, lineage)
-			restack.ClearRestackState(sc.RepoPath)
+			restack.ClearRestackState(sc.Git)
 			sc.Save()
 
 			if err != nil {

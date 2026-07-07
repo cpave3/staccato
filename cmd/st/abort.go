@@ -35,7 +35,7 @@ func abortCmd() *cobra.Command {
 
 			// Try to restore branches from backups that were created during the restack
 			backupMgr := backup.NewManager(gitRunner, repoPath)
-			state, stateErr := restack.LoadRestackState(repoPath)
+			state, stateErr := restack.LoadRestackState(gitRunner)
 			if stateErr == nil && state != nil && len(state.Lineage) > 0 {
 				for _, branch := range state.Lineage {
 					if branch == g.Root {
@@ -56,7 +56,7 @@ func abortCmd() *cobra.Command {
 			}
 
 			// Clear restack state
-			restack.ClearRestackState(repoPath)
+			restack.ClearRestackState(gitRunner)
 
 			// Save graph
 			if err := saveContext(g, repoPath, gitRunner); err != nil {

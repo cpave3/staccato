@@ -85,7 +85,7 @@ func modifyCmd() *cobra.Command {
 				if restackErr != nil {
 					if result != nil && result.Conflicts {
 						// Save restack state so `st continue` knows which branches to continue
-						restack.SaveRestackState(repoPath, &restack.RestackState{
+						restack.SaveRestackState(gitRunner, &restack.RestackState{
 							Lineage: allBranches,
 						})
 						printer.ConflictDetected(result.ConflictsAt)

@@ -191,6 +191,35 @@ func (r *GitRepo) OriginDir() string {
 	return r.origin
 }
 
+// AddWorktree creates a git worktree at the given path and returns the
+// absolute path to the worktree directory. The worktree is checked out at a
+// new branch named "<name>" so HEAD is not detached. Use this to exercise
+// worktree scenarios where .git is a file, not a directory.
+func (r *GitRepo) AddWorktree(name string) (string, error) {
+	wtDir, err := os.MkdirTemp("", "st-wt-"+name+"-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create worktree dir: %w", err)
+	}
+	// Create a branch and worktree on it so HEAD is not detached.
+	if err := r.runGit("worktree", "add", "-b", name, wtDir, "HEAD"); err != nil {
+		os.RemoveAll(wtDir)
+		return "", fmt.Errorf("failed to add worktree: %w", err)
+	}
+	return wtDir, nil
+}
+
+// GitDir returns the absolute path to the .git directory (or worktree gitdir).
+func (r *GitRepo) GitDir() string {
+	cmd := exec.Command("git", "rev-parse", "--absolute-git-dir")
+	cmd.Dir = r.Dir
+	cmd.Env = r.gitEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // InitStack initializes a stack graph for testing
 func (r *GitRepo) InitStack() error {
 	// Create initial commit

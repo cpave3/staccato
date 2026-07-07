@@ -410,7 +410,8 @@ func (m *Manager) DeleteBackups(backups []BackupInfo) (int, error) {
 	return deleted, nil
 }
 
-// GetBackupPath returns the default path for storing backup metadata
-func GetBackupPath(repoPath string) string {
-	return filepath.Join(repoPath, ".git", "stack", "backups")
+// GetBackupPath returns the default path for storing backup metadata under
+// the given git directory (as resolved by git.Runner.GitDir).
+func GetBackupPath(gitDir string) string {
+	return filepath.Join(gitDir, "stack", "backups")
 }

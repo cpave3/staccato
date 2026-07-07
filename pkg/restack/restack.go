@@ -27,22 +27,35 @@ type RestackState struct {
 	Lineage []string `json:"lineage"`
 }
 
+// restackStatePath returns the path to the restack-state.json file inside
+// the runner's git directory. This is worktree-safe: GitDir resolves the real
+// git directory even when .git is a file (linked worktree).
+func restackStatePath(gitRunner *git.Runner) string {
+	gitDir, err := gitRunner.GitDir()
+	if err != nil || gitDir == "" {
+		// Fall back to <repoPath>/.git — best-effort.
+		gitDir = filepath.Join(gitRunner.RepoPath(), ".git")
+	}
+	return filepath.Join(gitDir, "stack", "restack-state.json")
+}
+
 // SaveRestackState writes the restack state to disk.
-func SaveRestackState(repoPath string, state *RestackState) error {
+func SaveRestackState(gitRunner *git.Runner, state *RestackState) error {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal restack state: %w", err)
 	}
-	stateDir := filepath.Join(repoPath, ".git", "stack")
+	statePath := restackStatePath(gitRunner)
+	stateDir := filepath.Dir(statePath)
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
-	return os.WriteFile(filepath.Join(stateDir, "restack-state.json"), data, 0644)
+	return os.WriteFile(statePath, data, 0644)
 }
 
 // LoadRestackState reads the restack state from disk.
-func LoadRestackState(repoPath string) (*RestackState, error) {
-	data, err := os.ReadFile(filepath.Join(repoPath, ".git", "stack", "restack-state.json"))
+func LoadRestackState(gitRunner *git.Runner) (*RestackState, error) {
+	data, err := os.ReadFile(restackStatePath(gitRunner))
 	if err != nil {
 		return nil, err
 	}
@@ -54,8 +67,8 @@ func LoadRestackState(repoPath string) (*RestackState, error) {
 }
 
 // ClearRestackState removes the restack state file.
-func ClearRestackState(repoPath string) {
-	os.Remove(filepath.Join(repoPath, ".git", "stack", "restack-state.json"))
+func ClearRestackState(gitRunner *git.Runner) {
+	os.Remove(restackStatePath(gitRunner))
 }
 
 // Engine handles the restack logic

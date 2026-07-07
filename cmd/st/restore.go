@@ -79,7 +79,7 @@ Use this to recover from failed restack operations.`,
 				saveContext(g, repoPath, git)
 
 				// Clean up restack state
-				restack.ClearRestackState(repoPath)
+				restack.ClearRestackState(git)
 			} else {
 				// Restore specific branch
 				var branchName string

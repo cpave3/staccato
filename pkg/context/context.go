@@ -17,8 +17,18 @@ type StaccatoContext struct {
 	Graph    *graph.Graph
 	Git      *git.Runner
 	RepoPath string
+	// gitDir is the common git directory shared across worktrees (resolved via
+	// --git-common-dir). Local graph storage lives under gitDir/stack/ so the
+	// stack graph is visible from every worktree.
+	gitDir string
 	// sharedRef is the per-user ref path when in shared mode, or "" for local mode.
 	sharedRef string
+}
+
+// GitDir returns the common git directory used for local graph storage.
+// This is shared across worktrees.
+func (sc *StaccatoContext) GitDir() string {
+	return sc.gitDir
 }
 
 // IsTrunkBranch returns true if the branch name is a common trunk/root branch.
@@ -34,10 +44,15 @@ func IsTrunkBranch(name string) bool {
 // NewContext creates a StaccatoContext with the correct shared ref resolved.
 // Use this when you have a graph in memory that needs to be saved.
 func NewContext(g *graph.Graph, gitRunner *git.Runner, repoPath string) *StaccatoContext {
+	gitDir, _ := gitRunner.GitCommonDir()
+	if gitDir == "" {
+		gitDir = filepath.Join(repoPath, ".git")
+	}
 	return &StaccatoContext{
 		Graph:     g,
 		Git:       gitRunner,
 		RepoPath:  repoPath,
+		gitDir:    gitDir,
 		sharedRef: resolveSharedRef(gitRunner),
 	}
 }
@@ -91,6 +106,11 @@ func Load(repoPath string) (*StaccatoContext, error) {
 
 	gitRunner = git.NewRunner(root)
 
+	gitDir, err := gitRunner.GitCommonDir()
+	if err != nil || gitDir == "" {
+		return nil, fmt.Errorf("failed to resolve git directory: %w", err)
+	}
+
 	var g *graph.Graph
 	sharedRef := resolveSharedRef(gitRunner)
 
@@ -114,7 +134,7 @@ func Load(repoPath string) (*StaccatoContext, error) {
 		}
 
 	default:
-		graphPath := filepath.Join(root, graph.DefaultGraphPath)
+		graphPath := filepath.Join(gitDir, "stack", "graph.json")
 		g, err = graph.LoadGraph(graphPath)
 		if err != nil {
 			currentBranch, branchErr := gitRunner.GetCurrentBranch()
@@ -129,6 +149,7 @@ func Load(repoPath string) (*StaccatoContext, error) {
 		Graph:     g,
 		Git:       gitRunner,
 		RepoPath:  root,
+		gitDir:    gitDir,
 		sharedRef: sharedRef,
 	}, nil
 }
@@ -151,6 +172,6 @@ func (sc *StaccatoContext) Save() error {
 		}
 		return nil
 	}
-	graphPath := filepath.Join(sc.RepoPath, graph.DefaultGraphPath)
+	graphPath := filepath.Join(sc.gitDir, "stack", "graph.json")
 	return sc.Graph.Save(graphPath)
 }

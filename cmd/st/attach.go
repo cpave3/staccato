@@ -503,7 +503,7 @@ func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, at
 			if err != nil {
 				if result.Conflicts {
 					// Save restack state so `st continue` knows which branches to continue
-					restack.SaveRestackState(repoPath, &restack.RestackState{
+					restack.SaveRestackState(gitRunner, &restack.RestackState{
 						Lineage: affectedBranches,
 					})
 					printer.ConflictDetected(result.ConflictsAt)
