@@ -25,6 +25,7 @@ var reviewBots = map[string]bool{
 	"coderabbitai[bot]":  true,
 	"cubic-dev-ai[bot]":  true,
 	"greptile-apps[bot]": true,
+	"cursor[bot]":        true,
 }
 
 // FeedbackItem represents a single review comment from a PR.
