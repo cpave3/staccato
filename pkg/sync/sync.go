@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/backup"
+	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
 	"github.com/cpave3/staccato/pkg/restack"
@@ -13,19 +13,19 @@ import (
 
 // Options controls sync behavior.
 type Options struct {
-	DryRun  bool
+	DryRun   bool
 	DownOnly bool
 }
 
 // Result reports what happened during sync.
 type Result struct {
-	Fetched          bool
-	TrunkUpdated     bool
-	MergedBranches   []string
-	PushedBranches   []string
-	RestackedCount   int
-	Conflicts        bool
-	ConflictsAt      string
+	Fetched           bool
+	TrunkUpdated      bool
+	MergedBranches    []string
+	PushedBranches    []string
+	RestackedCount    int
+	Conflicts         bool
+	ConflictsAt       string
 	StashedFromBranch string // non-empty if we stashed uncommitted changes from a merged branch
 }
 
@@ -42,6 +42,7 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 	}
 
 	originalBranch, _ := gitRunner.GetCurrentBranch()
+	activeLineage := restack.GetLineage(g, originalBranch)
 
 	// 1. Fetch with prune
 	if err := gitRunner.FetchPrune(); err != nil {
@@ -126,10 +127,14 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 				gitRunner.StashPush(fmt.Sprintf("st-sync: changes from merged branch %s", branch))
 				result.StashedFromBranch = branch
 			}
-			gitRunner.CheckoutBranch(trunk)
+			if err := gitRunner.CheckoutBranch(trunk); err != nil {
+				return result, fmt.Errorf("failed to checkout trunk '%s': %w", trunk, err)
+			}
 			originalBranch = trunk
 		}
-		gitRunner.DeleteBranch(branch, true)
+		if err := gitRunner.DeleteBranch(branch, true); err != nil {
+			return result, fmt.Errorf("failed to delete merged branch '%s': %w", branch, err)
+		}
 	}
 
 	// 5. Save graph if branches were removed
@@ -139,8 +144,19 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 		}
 	}
 
-	// 6. Restack current lineage only
-	lineage := restack.GetLineage(g, originalBranch)
+	// 6. Restack only branches from the lineage that was active when sync began.
+	// Snapshotting before cleanup matters when the active branch was merged: using
+	// trunk at that point would select every lineage in the graph.
+	lineage := make([]string, 0, len(activeLineage))
+	for _, branch := range activeLineage {
+		if branch == trunk {
+			lineage = append(lineage, branch)
+			continue
+		}
+		if _, exists := g.GetBranch(branch); exists {
+			lineage = append(lineage, branch)
+		}
+	}
 	if len(lineage) > 1 { // more than just root
 		backupMgr := backup.NewManager(gitRunner, sc.RepoPath)
 		engine := restack.NewEngine(gitRunner, backupMgr)

@@ -310,6 +310,171 @@ func TestSyncRestacksOnlyCurrentLineage(t *testing.T) {
 	}
 }
 
+func TestSyncFromMergedBranchRestacksOnlyItsSurvivingLineage(t *testing.T) {
+	testSyncMergedParentWithUnrelatedWorktree(t, "merged-pr", "main")
+}
+
+func TestSyncFromSurvivingStackRestacksOnlyActiveLineage(t *testing.T) {
+	testSyncMergedParentWithUnrelatedWorktree(t, "active-pr", "active-pr")
+}
+
+func testSyncMergedParentWithUnrelatedWorktree(t *testing.T, startingBranch, expectedBranch string) {
+	t.Helper()
+	repoDir, bareDir, gitRunner := initRepoWithRemote(t)
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	commitFile := func(branch, parent, filename string) string {
+		t.Helper()
+		run(repoDir, "checkout", parent)
+		run(repoDir, "checkout", "-b", branch)
+		os.WriteFile(filepath.Join(repoDir, filename), []byte(branch), 0644)
+		run(repoDir, "add", filename)
+		run(repoDir, "commit", "-m", branch)
+		return getSHA(t, repoDir, branch)
+	}
+
+	mainSHA := getSHA(t, repoDir, "main")
+	mergedSHA := commitFile("merged-pr", "main", "merged.txt")
+	activeSHA := commitFile("active-pr", "merged-pr", "active.txt")
+	unrelatedSHA := commitFile("unrelated-pr", "main", "unrelated.txt")
+
+	g := graph.NewGraph("main")
+	g.AddBranch("merged-pr", "main", mainSHA, mergedSHA)
+	g.AddBranch("active-pr", "merged-pr", mergedSHA, activeSHA)
+	g.AddBranch("unrelated-pr", "main", mainSHA, unrelatedSHA)
+
+	worktreeDir := filepath.Join(t.TempDir(), "unrelated-worktree")
+	run(repoDir, "checkout", startingBranch)
+	run(repoDir, "worktree", "add", worktreeDir, "unrelated-pr")
+
+	// Simulate GitHub merging merged-pr and deleting its remote branch.
+	run(repoDir, "push", "origin", "merged-pr")
+	run(bareDir, "update-ref", "refs/heads/main", mergedSHA)
+	run(bareDir, "update-ref", "-d", "refs/heads/merged-pr")
+
+	sc := stcontext.NewContext(g, gitRunner, repoDir)
+	result, err := Run(sc, Options{DownOnly: true})
+	if err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	if _, exists := g.Branches["merged-pr"]; exists {
+		t.Error("merged-pr should be removed from the graph")
+	}
+	active := g.Branches["active-pr"]
+	if active == nil {
+		t.Fatal("active-pr should remain in the graph")
+	}
+	if active.Parent != "main" {
+		t.Errorf("active-pr parent = %q, want main", active.Parent)
+	}
+	mainAfter := getSHA(t, repoDir, "main")
+	mergeBase := getMergeBase(t, repoDir, "active-pr", "main")
+	if mergeBase != mainAfter {
+		t.Errorf("active-pr was not restacked onto main: merge-base = %s, main = %s", mergeBase, mainAfter)
+	}
+	if got := getSHA(t, repoDir, "unrelated-pr"); got != unrelatedSHA {
+		t.Errorf("unrelated-pr changed: got %s, want %s", got, unrelatedSHA)
+	}
+	if result.RestackedCount != 1 {
+		t.Errorf("restacked count = %d, want 1", result.RestackedCount)
+	}
+	current, err := gitRunner.GetCurrentBranch()
+	if err != nil {
+		t.Fatalf("get current branch: %v", err)
+	}
+	if current != expectedBranch {
+		t.Errorf("current branch = %q, want %q", current, expectedBranch)
+	}
+}
+
+func TestSyncReportsFailureToCheckoutTrunkFromMergedBranch(t *testing.T) {
+	repoDir, bareDir, gitRunner := initRepoWithRemote(t)
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	mainSHA := getSHA(t, repoDir, "main")
+	run(repoDir, "checkout", "-b", "merged-pr")
+	os.WriteFile(filepath.Join(repoDir, "merged.txt"), []byte("merged"), 0644)
+	run(repoDir, "add", "merged.txt")
+	run(repoDir, "commit", "-m", "merged-pr")
+	mergedSHA := getSHA(t, repoDir, "merged-pr")
+
+	g := graph.NewGraph("main")
+	g.AddBranch("merged-pr", "main", mainSHA, mergedSHA)
+	mainWorktree := filepath.Join(t.TempDir(), "main-worktree")
+	run(repoDir, "worktree", "add", mainWorktree, "main")
+	run(repoDir, "push", "origin", "merged-pr")
+	run(bareDir, "update-ref", "refs/heads/main", mergedSHA)
+	run(bareDir, "update-ref", "-d", "refs/heads/merged-pr")
+
+	sc := stcontext.NewContext(g, gitRunner, repoDir)
+	_, err := Run(sc, Options{DownOnly: true})
+	if err == nil {
+		t.Fatal("sync should fail when trunk cannot be checked out")
+	}
+}
+
+func TestSyncReportsFailureToDeleteMergedBranch(t *testing.T) {
+	repoDir, bareDir, gitRunner := initRepoWithRemote(t)
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	mainSHA := getSHA(t, repoDir, "main")
+	run(repoDir, "checkout", "-b", "merged-pr")
+	os.WriteFile(filepath.Join(repoDir, "merged.txt"), []byte("merged"), 0644)
+	run(repoDir, "add", "merged.txt")
+	run(repoDir, "commit", "-m", "merged-pr")
+	mergedSHA := getSHA(t, repoDir, "merged-pr")
+	run(repoDir, "checkout", "main")
+
+	g := graph.NewGraph("main")
+	g.AddBranch("merged-pr", "main", mainSHA, mergedSHA)
+	mergedWorktree := filepath.Join(t.TempDir(), "merged-worktree")
+	run(repoDir, "worktree", "add", mergedWorktree, "merged-pr")
+	run(repoDir, "push", "origin", "merged-pr")
+	run(bareDir, "update-ref", "refs/heads/main", mergedSHA)
+	run(bareDir, "update-ref", "-d", "refs/heads/merged-pr")
+
+	sc := stcontext.NewContext(g, gitRunner, repoDir)
+	_, err := Run(sc, Options{DownOnly: true})
+	if err == nil {
+		t.Fatal("sync should fail when a merged branch cannot be deleted")
+	}
+}
+
+func getMergeBase(t *testing.T, dir, left, right string) string {
+	t.Helper()
+	cmd := exec.Command("git", "merge-base", left, right)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("failed to get merge-base for %s and %s: %v", left, right, err)
+	}
+	return string(out[:len(out)-1])
+}
+
 func getSHA(t *testing.T, dir, ref string) string {
 	t.Helper()
 	cmd := exec.Command("git", "rev-parse", ref)
