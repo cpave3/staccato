@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/hooks"
 	stync "github.com/cpave3/staccato/pkg/sync"
+	"github.com/spf13/cobra"
 )
 
 func syncCmd() *cobra.Command {
@@ -84,8 +84,18 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 				if result.StashedFromBranch != "" {
 					printer.Warning("Stashing uncommitted changes from merged branch '%s'", result.StashedFromBranch)
 				}
+				deferred := make(map[string]bool, len(result.DeferredBranchDeletions))
+				for _, branch := range result.DeferredBranchDeletions {
+					deferred[branch] = true
+					printer.SyncBranchDeletionDeferred(branch)
+				}
+				for _, branch := range result.CompletedBranchDeletions {
+					printer.SyncBranchCleanupCompleted(branch)
+				}
 				for _, branch := range result.MergedBranches {
-					printer.SyncBranchRemoved(branch)
+					if !deferred[branch] {
+						printer.SyncBranchRemoved(branch)
+					}
 				}
 
 				if result.Conflicts {
@@ -110,9 +120,11 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 					Event:    hooks.PostSync,
 					RepoPath: repoPath,
 					Data: map[string]any{
-						"merged_branches":  result.MergedBranches,
-						"pushed_branches":  result.PushedBranches,
-						"restacked_count":  result.RestackedCount,
+						"merged_branches":            result.MergedBranches,
+						"pushed_branches":            result.PushedBranches,
+						"restacked_count":            result.RestackedCount,
+						"deferred_branch_deletions":  result.DeferredBranchDeletions,
+						"completed_branch_deletions": result.CompletedBranchDeletions,
 					},
 				})
 			}

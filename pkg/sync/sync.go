@@ -3,6 +3,9 @@ package sync
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 
 	"github.com/cpave3/staccato/pkg/backup"
 	stcontext "github.com/cpave3/staccato/pkg/context"
@@ -19,14 +22,22 @@ type Options struct {
 
 // Result reports what happened during sync.
 type Result struct {
-	Fetched           bool
-	TrunkUpdated      bool
-	MergedBranches    []string
-	PushedBranches    []string
-	RestackedCount    int
-	Conflicts         bool
-	ConflictsAt       string
-	StashedFromBranch string // non-empty if we stashed uncommitted changes from a merged branch
+	Fetched                  bool
+	TrunkUpdated             bool
+	MergedBranches           []string
+	PushedBranches           []string
+	RestackedCount           int
+	Conflicts                bool
+	ConflictsAt              string
+	StashedFromBranch        string // non-empty if we stashed uncommitted changes from a merged branch
+	DeferredBranchDeletions  []string
+	CompletedBranchDeletions []string
+}
+
+const pendingCleanupFilename = "pending-branch-cleanup.json"
+
+type pendingCleanup struct {
+	Branches []string `json:"branches"`
 }
 
 // Run performs the full sync operation: fetch, detect merged, restack, push.
@@ -50,7 +61,17 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 	}
 	result.Fetched = true
 
-	// Reconcile shared graph after fetch
+	if !opts.DryRun {
+		deferred, completed, err := retryPendingCleanup(sc)
+		if err != nil {
+			return result, err
+		}
+		result.DeferredBranchDeletions = appendUnique(result.DeferredBranchDeletions, deferred...)
+		result.CompletedBranchDeletions = appendUnique(result.CompletedBranchDeletions, completed...)
+	}
+
+	// Reconcile shared graph after local cleanup so deleted branches are not
+	// revived from stale shared metadata.
 	if sc.IsShared() {
 		reconcileSharedGraph(g, sc.SharedRef(), gitRunner)
 	}
@@ -132,6 +153,17 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 			}
 			originalBranch = trunk
 		}
+		worktree, checkedOut, worktreeErr := gitRunner.BranchWorktree(branch)
+		if worktreeErr != nil {
+			return result, fmt.Errorf("failed to inspect worktrees before deleting merged branch '%s': %w", branch, worktreeErr)
+		}
+		if checkedOut {
+			result.DeferredBranchDeletions = appendUnique(result.DeferredBranchDeletions, branch)
+			if err := addPendingCleanup(sc.GitDir(), branch); err != nil {
+				return result, fmt.Errorf("failed to record deferred branch deletion for '%s' checked out at '%s': %w", branch, worktree, err)
+			}
+			continue
+		}
 		if err := gitRunner.DeleteBranch(branch, true); err != nil {
 			return result, fmt.Errorf("failed to delete merged branch '%s': %w", branch, err)
 		}
@@ -205,6 +237,111 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 	}
 
 	return result, nil
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	seen := make(map[string]bool, len(values)+len(additions))
+	for _, value := range values {
+		seen[value] = true
+	}
+	for _, addition := range additions {
+		if !seen[addition] {
+			values = append(values, addition)
+			seen[addition] = true
+		}
+	}
+	return values
+}
+
+func pendingCleanupPath(gitDir string) string {
+	return filepath.Join(gitDir, "stack", pendingCleanupFilename)
+}
+
+func loadPendingCleanup(gitDir string) ([]string, error) {
+	data, err := os.ReadFile(pendingCleanupPath(gitDir))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var state pendingCleanup
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return state.Branches, nil
+}
+
+func savePendingCleanup(gitDir string, branches []string) error {
+	path := pendingCleanupPath(gitDir)
+	if len(branches) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	sort.Strings(branches)
+	data, err := json.MarshalIndent(pendingCleanup{Branches: branches}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func addPendingCleanup(gitDir, branch string) error {
+	branches, err := loadPendingCleanup(gitDir)
+	if err != nil {
+		return err
+	}
+	for _, pending := range branches {
+		if pending == branch {
+			return nil
+		}
+	}
+	return savePendingCleanup(gitDir, append(branches, branch))
+}
+
+func retryPendingCleanup(sc *stcontext.StaccatoContext) ([]string, []string, error) {
+	pending, err := loadPendingCleanup(sc.GitDir())
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load pending branch cleanup: %w", err)
+	}
+
+	var deferred []string
+	var completed []string
+	for _, branch := range pending {
+		exists, err := sc.Git.BranchExists(branch)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to inspect pending branch '%s': %w", branch, err)
+		}
+		if !exists {
+			completed = append(completed, branch)
+			continue
+		}
+		_, checkedOut, err := sc.Git.BranchWorktree(branch)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to inspect worktrees for pending branch '%s': %w", branch, err)
+		}
+		if checkedOut {
+			deferred = append(deferred, branch)
+			continue
+		}
+		if err := sc.Git.DeleteBranch(branch, true); err != nil {
+			return nil, nil, fmt.Errorf("failed to delete pending merged branch '%s': %w", branch, err)
+		}
+		completed = append(completed, branch)
+	}
+	if err := savePendingCleanup(sc.GitDir(), deferred); err != nil {
+		return nil, nil, fmt.Errorf("failed to save pending branch cleanup: %w", err)
+	}
+	return deferred, completed, nil
 }
 
 // DetectMergedBranches returns branch names that have been merged into trunk.

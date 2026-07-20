@@ -128,6 +128,24 @@ After detecting merged branches, the sync command SHALL remove them from the gra
 - **THEN** the command MUST check out the trunk branch before deleting the merged branch
 - **AND** the original branch tracking MUST be updated to trunk for subsequent operations
 
+#### Scenario: Merged branch is checked out in another worktree
+- **WHEN** a merged branch is checked out in another worktree
+- **THEN** the branch MUST be removed from the stack graph
+- **AND** its local git branch deletion MUST be deferred without failing sync
+- **AND** the command MUST warn that the merged branch is still checked out and local deletion was deferred
+- **AND** the branch MUST be recorded in repository-local pending cleanup state
+
+#### Scenario: Retry deferred branch deletion
+- **WHEN** a later sync finds a branch in pending cleanup state
+- **THEN** deletion MUST be retried
+- **AND** if the branch remains checked out in a worktree, sync MUST warn and defer it again without failing
+- **AND** if the branch is no longer checked out, its local git branch MUST be deleted and its pending cleanup entry removed
+- **AND** if the local branch no longer exists, its pending cleanup entry MUST be removed
+
+#### Scenario: Unrelated branch deletion failure
+- **WHEN** deleting a merged or pending branch fails for a reason other than worktree occupancy
+- **THEN** sync MUST fail and surface the git error
+
 #### Scenario: Graph persistence after removal
 - **WHEN** one or more branches are removed as merged
 - **THEN** the graph MUST be saved to storage (local file or shared ref)

@@ -270,6 +270,25 @@ func (r *Runner) DeleteBranch(name string, force bool) error {
 	return err
 }
 
+// BranchWorktree returns the path of the worktree where branch is checked out.
+func (r *Runner) BranchWorktree(branch string) (string, bool, error) {
+	output, err := r.Run("worktree", "list", "--porcelain")
+	if err != nil {
+		return "", false, err
+	}
+
+	var worktree string
+	for _, line := range strings.Split(output, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			worktree = strings.TrimPrefix(line, "worktree ")
+		case line == "branch refs/heads/"+branch:
+			return worktree, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // GetUserEmail returns the configured git user.email.
 func (r *Runner) GetUserEmail() (string, error) {
 	return r.Run("config", "user.email")

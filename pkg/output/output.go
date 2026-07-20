@@ -237,6 +237,16 @@ func (p *Printer) SyncBranchRemoved(branch string) {
 	p.Info("Removed '%s' from stack and deleted local branch", branch)
 }
 
+// SyncBranchDeletionDeferred warns that a merged branch remains checked out in a worktree.
+func (p *Printer) SyncBranchDeletionDeferred(branch string) {
+	p.Warning("Merged branch '%s' is checked out in another worktree; local deletion deferred", branch)
+}
+
+// SyncBranchCleanupCompleted reports successful cleanup from a prior sync.
+func (p *Printer) SyncBranchCleanupCompleted(branch string) {
+	p.Info("Deleted previously deferred merged branch '%s'", branch)
+}
+
 // SyncNoMergedBranches prints when no merged branches are found
 func (p *Printer) SyncNoMergedBranches() {
 	p.Println("No merged branches detected.")

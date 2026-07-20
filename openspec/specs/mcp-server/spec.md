@@ -277,7 +277,7 @@ The `st_git_commit` tool SHALL create a commit with the given message. The `mess
 ## 7. Sync Tools
 
 ### Requirement: Sync Operation (st_sync)
-The `st_sync` tool SHALL perform a full sync: fetch from remote, detect merged branches, restack, and push. It accepts optional `dry_run` (boolean) and `down_only` (boolean) parameters. The response SHALL be a JSON object with fields: `fetched`, `trunk_updated`, `merged_branches`, `pushed_branches`, `restacked_count`, and `dry_run`.
+The `st_sync` tool SHALL perform a full sync: fetch from remote, detect merged branches, restack, and push. It accepts optional `dry_run` (boolean) and `down_only` (boolean) parameters. The response SHALL be a JSON object with fields: `fetched`, `trunk_updated`, `merged_branches`, `pushed_branches`, `restacked_count`, `deferred_branch_deletions`, `completed_branch_deletions`, and `dry_run`.
 
 #### Scenario: Full sync
 - **WHEN** `st_sync` is called with no parameters

@@ -2264,6 +2264,43 @@ func TestSyncSkipsUnpushedBranches(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestSyncDefersMergedBranchCheckedOutInWorktree
+// ---------------------------------------------------------------------------
+
+func TestSyncDefersMergedBranchCheckedOutInWorktree(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	if err := repo.AddRemote(); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	repo.RunGit("push", "-u", "origin", root)
+
+	runSt(t, "new", "merged-worktree-branch")
+	repo.CreateFile("merged.txt", "merged")
+	repo.AddAndCommit("merged branch")
+	mergedSHA, _ := repo.RunGit("rev-parse", "merged-worktree-branch")
+	repo.RunGit("push", "origin", "merged-worktree-branch")
+	repo.Checkout(root)
+
+	worktreeDir := filepath.Join(t.TempDir(), "merged-worktree")
+	if out, err := repo.RunGit("worktree", "add", worktreeDir, "merged-worktree-branch"); err != nil {
+		t.Fatalf("add worktree: %v\n%s", err, out)
+	}
+
+	originDir := repo.OriginDir()
+	runGitInDir(t, originDir, "update-ref", "refs/heads/"+root, mergedSHA)
+	runGitInDir(t, originDir, "branch", "-D", "merged-worktree-branch")
+
+	out := runSt(t, "sync", "--down")
+	assertContains(t, out, "Merged branch 'merged-worktree-branch' is checked out in another worktree; local deletion deferred")
+	if graphContains(t, repo, "merged-worktree-branch") {
+		t.Error("merged branch should be removed from the stack graph")
+	}
+	if !repo.BranchExists("merged-worktree-branch") {
+		t.Error("merged branch should remain while checked out in a worktree")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // TestSyncUserOnMergedBranch
 // ---------------------------------------------------------------------------
 

@@ -47,12 +47,14 @@ func registerSyncTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 			}
 
 			resp := map[string]any{
-				"fetched":         result.Fetched,
-				"trunk_updated":   result.TrunkUpdated,
-				"merged_branches": result.MergedBranches,
-				"pushed_branches": result.PushedBranches,
-				"restacked_count": result.RestackedCount,
-				"dry_run":         dryRun,
+				"fetched":                    result.Fetched,
+				"trunk_updated":              result.TrunkUpdated,
+				"merged_branches":            result.MergedBranches,
+				"pushed_branches":            result.PushedBranches,
+				"restacked_count":            result.RestackedCount,
+				"deferred_branch_deletions":  result.DeferredBranchDeletions,
+				"completed_branch_deletions": result.CompletedBranchDeletions,
+				"dry_run":                    dryRun,
 			}
 			if result.Conflicts {
 				resp["conflicts"] = true
@@ -71,9 +73,11 @@ func registerSyncTools(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 					Event:    hooks.PostSync,
 					RepoPath: sc.RepoPath,
 					Data: map[string]any{
-						"merged_branches": result.MergedBranches,
-						"pushed_branches": result.PushedBranches,
-						"restacked_count": result.RestackedCount,
+						"merged_branches":            result.MergedBranches,
+						"pushed_branches":            result.PushedBranches,
+						"restacked_count":            result.RestackedCount,
+						"deferred_branch_deletions":  result.DeferredBranchDeletions,
+						"completed_branch_deletions": result.CompletedBranchDeletions,
 					},
 				})
 			}

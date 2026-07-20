@@ -95,6 +95,8 @@ Performs a full sync cycle:
 5. Restack remaining branches onto updated trunk
 6. Push remaining branches (skip with `--down`)
 
+If a merged branch is still checked out in another worktree, sync removes it from the stack but leaves the local branch in place, prints a warning, and succeeds. Later syncs retry the local deletion until the worktree releases the branch.
+
 Use `--down` to pull and restack without pushing. Use `--dry-run` to see what would be pushed.
 
 ### `st restack`

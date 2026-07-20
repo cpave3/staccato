@@ -429,7 +429,7 @@ func TestSyncReportsFailureToCheckoutTrunkFromMergedBranch(t *testing.T) {
 	}
 }
 
-func TestSyncReportsFailureToDeleteMergedBranch(t *testing.T) {
+func TestSyncDefersDeletingMergedBranchCheckedOutInWorktree(t *testing.T) {
 	repoDir, bareDir, gitRunner := initRepoWithRemote(t)
 	run := func(dir string, args ...string) {
 		t.Helper()
@@ -458,9 +458,41 @@ func TestSyncReportsFailureToDeleteMergedBranch(t *testing.T) {
 	run(bareDir, "update-ref", "-d", "refs/heads/merged-pr")
 
 	sc := stcontext.NewContext(g, gitRunner, repoDir)
-	_, err := Run(sc, Options{DownOnly: true})
-	if err == nil {
-		t.Fatal("sync should fail when a merged branch cannot be deleted")
+	result, err := Run(sc, Options{DownOnly: true})
+	if err != nil {
+		t.Fatalf("sync should defer worktree branch deletion, got: %v", err)
+	}
+	if _, exists := g.GetBranch("merged-pr"); exists {
+		t.Error("merged branch should be removed from the stack graph")
+	}
+	if exists, _ := gitRunner.BranchExists("merged-pr"); !exists {
+		t.Error("merged branch should remain while checked out in a worktree")
+	}
+	if len(result.DeferredBranchDeletions) != 1 || result.DeferredBranchDeletions[0] != "merged-pr" {
+		t.Fatalf("deferred deletions = %v, want [merged-pr]", result.DeferredBranchDeletions)
+	}
+
+	result, err = Run(sc, Options{DownOnly: true})
+	if err != nil {
+		t.Fatalf("next sync should defer cleanup again, got: %v", err)
+	}
+	if len(result.DeferredBranchDeletions) != 1 || result.DeferredBranchDeletions[0] != "merged-pr" {
+		t.Fatalf("retried deferred deletions = %v, want [merged-pr]", result.DeferredBranchDeletions)
+	}
+
+	run(repoDir, "worktree", "remove", mergedWorktree)
+	result, err = Run(sc, Options{DownOnly: true})
+	if err != nil {
+		t.Fatalf("sync should complete pending cleanup, got: %v", err)
+	}
+	if exists, _ := gitRunner.BranchExists("merged-pr"); exists {
+		t.Error("merged branch should be deleted after its worktree is removed")
+	}
+	if len(result.CompletedBranchDeletions) != 1 || result.CompletedBranchDeletions[0] != "merged-pr" {
+		t.Fatalf("completed deletions = %v, want [merged-pr]", result.CompletedBranchDeletions)
+	}
+	if _, err := os.Stat(pendingCleanupPath(sc.GitDir())); !os.IsNotExist(err) {
+		t.Fatalf("pending cleanup state should be removed, stat error: %v", err)
 	}
 }
 
