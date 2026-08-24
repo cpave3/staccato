@@ -93,7 +93,7 @@ func (r *Runner) RebaseOnto(newBase, upstream string) error {
 
 // RebaseContinue continues a rebase after conflict resolution
 func (r *Runner) RebaseContinue() error {
-	_, err := r.Run("rebase", "--continue")
+	_, err := r.Run("-c", "core.editor=true", "rebase", "--continue")
 	return err
 }
 

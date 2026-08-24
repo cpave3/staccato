@@ -3668,6 +3668,90 @@ func TestSyncConflictContinue(t *testing.T) {
 			t.Error("restack state should be cleared after continue")
 		}
 	})
+
+	t.Run("sync_down_continues_parent_with_two_conflicting_commits", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		repo.CreateFile("first.txt", "base first")
+		repo.CreateFile("second.txt", "base second")
+		repo.AddAndCommit("add shared base files")
+
+		if err := repo.AddRemote(); err != nil {
+			t.Fatalf("AddRemote: %v", err)
+		}
+		repo.RunGit("push", "-u", "origin", root)
+
+		// Build a two-branch stack whose parent has two independently
+		// conflicting commits, then remain on the child tip.
+		runSt(t, "new", "parent")
+		repo.WriteFile("first.txt", "parent first")
+		repo.AddAndCommit("parent changes first")
+		repo.WriteFile("second.txt", "parent second")
+		repo.AddAndCommit("parent changes second")
+		runSt(t, "append", "tip")
+		repo.CreateFile("tip.txt", "tip content")
+		repo.AddAndCommit("tip commit")
+		repo.RunGit("push", "origin", "parent", "tip")
+
+		// Advance origin trunk with conflicts against each parent commit.
+		cloneDir, err := os.MkdirTemp("", "st-clone-*")
+		if err != nil {
+			t.Fatalf("MkdirTemp: %v", err)
+		}
+		defer os.RemoveAll(cloneDir)
+		runGitInDir(t, filepath.Dir(cloneDir), "clone", repo.OriginDir(), cloneDir)
+		runGitInDir(t, cloneDir, "config", "user.email", "other@test.com")
+		runGitInDir(t, cloneDir, "config", "user.name", "Other")
+		if err := os.WriteFile(filepath.Join(cloneDir, "first.txt"), []byte("origin first"), 0644); err != nil {
+			t.Fatalf("write first.txt: %v", err)
+		}
+		runGitInDir(t, cloneDir, "add", "first.txt")
+		runGitInDir(t, cloneDir, "commit", "-m", "origin changes first")
+		if err := os.WriteFile(filepath.Join(cloneDir, "second.txt"), []byte("origin second"), 0644); err != nil {
+			t.Fatalf("write second.txt: %v", err)
+		}
+		runGitInDir(t, cloneDir, "add", "second.txt")
+		runGitInDir(t, cloneDir, "commit", "-m", "origin changes second")
+		runGitInDir(t, cloneDir, "push", "origin", root)
+
+		out := runStExpectError(t, "sync", "--down")
+		assertContains(t, out, "conflict")
+
+		// A user's editor may be interactive. Continuing must not launch it,
+		// because subprocess output is captured and the editor cannot be used.
+		editorMarker := filepath.Join(repo.Dir, "editor-was-opened")
+		editorScript := filepath.Join(repo.Dir, "failing-editor.sh")
+		if err := os.WriteFile(editorScript, []byte("#!/bin/sh\ntouch \""+editorMarker+"\"\nexit 1\n"), 0755); err != nil {
+			t.Fatalf("write editor script: %v", err)
+		}
+		repo.RunGit("config", "core.editor", editorScript)
+
+		resolveConflictAndStage(t, repo, "first.txt", "resolved first")
+		out = runStExpectError(t, "continue")
+		assertContains(t, out, "conflict")
+		if repo.FileExists("editor-was-opened") {
+			t.Fatal("st continue opened Git's commit-message editor")
+		}
+		second, err := os.ReadFile(filepath.Join(repo.Dir, "second.txt"))
+		if err != nil {
+			t.Fatalf("read second.txt: %v", err)
+		}
+		if !strings.Contains(string(second), "<<<<<<<") {
+			t.Fatalf("first continue did not advance to the second conflict; second.txt = %q", second)
+		}
+
+		resolveConflictAndStage(t, repo, "second.txt", "resolved second")
+		runSt(t, "continue")
+
+		if current := getCurrentBranch(t, repo); current != "tip" {
+			t.Errorf("current branch = %q, want tip", current)
+		}
+		if !repo.FileExists("tip.txt") {
+			t.Error("tip commit should remain after continuing the restack")
+		}
+		if restackStateExists(t, repo) {
+			t.Error("restack state should be cleared after the second continue")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
