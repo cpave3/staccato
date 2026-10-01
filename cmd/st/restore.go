@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/attach"
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/restack"
+	"github.com/spf13/cobra"
 )
 
 func restoreCmd() *cobra.Command {
@@ -66,17 +66,24 @@ Use this to recover from failed restack operations.`,
 					if !exists {
 						continue
 					}
-					newHeadSHA, err := git.GetCommitSHA(branch)
+					base, head, err := repairedBranch(git, branch, b)
 					if err != nil {
-						continue
+						// Full-stack backups may predate a parent rewrite; after restoring
+						// every branch, their shared history is the available fork point.
+						base, err = git.GetMergeBase(branch, b.Parent)
+						if err != nil {
+							return err
+						}
+						head, err = git.GetCommitSHA(branch)
+						if err != nil {
+							return err
+						}
 					}
-					newBaseSHA, err := git.GetCommitSHA(b.Parent)
-					if err != nil {
-						continue
-					}
-					g.UpdateBranch(branch, newBaseSHA, newHeadSHA)
+					g.UpdateBranch(branch, base, head)
 				}
-				saveContext(g, repoPath, git)
+				if err := saveContext(g, repoPath, git); err != nil {
+					return err
+				}
 
 				// Clean up restack state
 				restack.ClearRestackState(git)
@@ -100,6 +107,16 @@ Use this to recover from failed restack operations.`,
 				}
 
 				printer.BackupRestored(branchName)
+				if b, exists := g.GetBranch(branchName); exists {
+					base, head, err := repairedBranch(git, branchName, b)
+					if err != nil {
+						return err
+					}
+					g.UpdateBranch(branchName, base, head)
+					if err := saveContext(g, repoPath, git); err != nil {
+						return err
+					}
+				}
 			}
 
 			return nil

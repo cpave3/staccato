@@ -63,10 +63,6 @@ func moveCmd() *cobra.Command {
 			b, _ := g.GetBranch(currentBranch)
 			b.Parent = onto
 
-			// Update BaseSHA to the new parent's HEAD
-			newBase, _ := gitRunner.GetCommitSHA(onto)
-			b.BaseSHA = newBase
-
 			// Restack the moved branch and its descendants
 			allBranches := append([]string{currentBranch}, descendants...)
 			backupMgr := backup.NewManager(gitRunner, repoPath)

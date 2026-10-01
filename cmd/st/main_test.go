@@ -11,8 +11,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/internal/testutil"
+	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/graph"
 )
 
@@ -1472,61 +1472,61 @@ func TestRestore(t *testing.T) {
 
 	// Cycle 4: restore --all preserves branch upstream tracking
 	t.Run("restore_all_preserves_upstream_tracking", func(t *testing.T) {
-	repo, root := setupRepoWithStack(t)
+		repo, root := setupRepoWithStack(t)
 
-	// Set up a remote so we can set upstream tracking
-	if err := repo.AddRemote(); err != nil {
-		t.Fatalf("AddRemote: %v", err)
-	}
-	repo.RunGit("push", "-u", "origin", root)
-
-	// Build stack: main -> f1 -> f2
-	runSt(t, "new", "f1")
-	repo.CreateFile("f1.txt", "f1 file")
-			repo.CreateFile("shared.txt", "f1 content")
-	repo.AddAndCommit("f1 commit")
-	repo.RunGit("push", "-u", "origin", "f1")
-
-	runSt(t, "append", "f2")
-	repo.CreateFile("f2.txt", "f2 file")
-	repo.AddAndCommit("f2 commit")
-	repo.RunGit("push", "-u", "origin", "f2")
-
-	// Create conflicting change on root
-	repo.Checkout(root)
-	repo.CreateFile("shared.txt", "root content")
-	repo.AddAndCommit("root conflict")
-
-	// Restack -> conflict
-	repo.Checkout("f2")
-	runStExpectError(t, "restack")
-
-	// Verify branches have upstream tracking before restore
-	for _, branch := range []string{"f1", "f2", root} {
-		remote, err := repo.RunGit("config", "--get", fmt.Sprintf("branch.%s.remote", branch))
-		if err != nil {
-			t.Fatalf("branch %s expected to have tracking remote before restore", branch)
+		// Set up a remote so we can set upstream tracking
+		if err := repo.AddRemote(); err != nil {
+			t.Fatalf("AddRemote: %v", err)
 		}
-		if strings.TrimSpace(remote) != "origin" {
-			t.Fatalf("branch %s tracking remote=%q, want origin", branch, remote)
-		}
-	}
+		repo.RunGit("push", "-u", "origin", root)
 
-	// Restore --all
-	runSt(t, "restore", "--all")
+		// Build stack: main -> f1 -> f2
+		runSt(t, "new", "f1")
+		repo.CreateFile("f1.txt", "f1 file")
+		repo.CreateFile("shared.txt", "f1 content")
+		repo.AddAndCommit("f1 commit")
+		repo.RunGit("push", "-u", "origin", "f1")
 
-	// Assert upstream tracking survived for all branches
-	for _, branch := range []string{"f1", "f2", root} {
-		remote, err := repo.RunGit("config", "--get", fmt.Sprintf("branch.%s.remote", branch))
-		if err != nil {
-			t.Errorf("branch %s lost upstream tracking remote after restore", branch)
-			continue
+		runSt(t, "append", "f2")
+		repo.CreateFile("f2.txt", "f2 file")
+		repo.AddAndCommit("f2 commit")
+		repo.RunGit("push", "-u", "origin", "f2")
+
+		// Create conflicting change on root
+		repo.Checkout(root)
+		repo.CreateFile("shared.txt", "root content")
+		repo.AddAndCommit("root conflict")
+
+		// Restack -> conflict
+		repo.Checkout("f2")
+		runStExpectError(t, "restack")
+
+		// Verify branches have upstream tracking before restore
+		for _, branch := range []string{"f1", "f2", root} {
+			remote, err := repo.RunGit("config", "--get", fmt.Sprintf("branch.%s.remote", branch))
+			if err != nil {
+				t.Fatalf("branch %s expected to have tracking remote before restore", branch)
+			}
+			if strings.TrimSpace(remote) != "origin" {
+				t.Fatalf("branch %s tracking remote=%q, want origin", branch, remote)
+			}
 		}
-		if strings.TrimSpace(remote) != "origin" {
-			t.Errorf("branch %s tracking remote=%q after restore, want origin", branch, remote)
+
+		// Restore --all
+		runSt(t, "restore", "--all")
+
+		// Assert upstream tracking survived for all branches
+		for _, branch := range []string{"f1", "f2", root} {
+			remote, err := repo.RunGit("config", "--get", fmt.Sprintf("branch.%s.remote", branch))
+			if err != nil {
+				t.Errorf("branch %s lost upstream tracking remote after restore", branch)
+				continue
+			}
+			if strings.TrimSpace(remote) != "origin" {
+				t.Errorf("branch %s tracking remote=%q after restore, want origin", branch, remote)
+			}
 		}
-	}
-})
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1853,7 +1853,7 @@ func TestSyncDetectsSquashMergeWithAdvancedTrunk(t *testing.T) {
 // commits, conflicting. A fork-point candidate must be an ancestor of the
 // branch to be usable.
 
-func TestSyncRestackIgnoresForeignBaseSHA(t *testing.T) {
+func TestSyncRestackRejectsForeignBaseSHA(t *testing.T) {
 	repo, root := setupRepoWithStack(t)
 	if err := repo.AddRemote(); err != nil {
 		t.Fatalf("AddRemote: %v", err)
@@ -1891,19 +1891,9 @@ func TestSyncRestackIgnoresForeignBaseSHA(t *testing.T) {
 		t.Fatalf("save graph: %v", err)
 	}
 
-	runSt(t, "-v", "sync", "--down")
+	out := runStExpectError(t, "-v", "sync", "--down")
+	assertContains(t, out, "st graph repair")
 
-	// m1 should sit directly on trunk with only its own commit — the trunk
-	// edits and the foreign commit must not have been replayed.
-	mergeBase, _ := repo.RunGit("merge-base", "m1", root)
-	rootSHA, _ := repo.RunGit("rev-parse", root)
-	if mergeBase != rootSHA {
-		t.Errorf("m1 should be based on trunk %s, merge-base = %s", rootSHA, mergeBase)
-	}
-	count, _ := repo.RunGit("rev-list", "--count", root+"..m1")
-	if count != "1" {
-		t.Errorf("m1 should have exactly its own commit on top of trunk, got %s", count)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -5034,5 +5024,132 @@ func TestReviews_FlagsRegistered(t *testing.T) {
 	}
 	if !strings.Contains(out, "--out") {
 		t.Error("missing --out flag in help")
+	}
+}
+
+func TestGraphRepairRestoredStack(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	runSt(t, "new", "repair-parent")
+	repo.CreateFile("parent.txt", "parent")
+	repo.AddAndCommit("parent change")
+	parent, _ := repo.RunGit("rev-parse", "repair-parent")
+	runSt(t, "append", "repair-child")
+	repo.CreateFile("child.txt", "child")
+	repo.AddAndCommit("child change")
+	child, _ := repo.RunGit("rev-parse", "repair-child")
+	g := loadGraph(t, repo)
+	g.UpdateBranch("repair-parent", "stale", "stale")
+	g.UpdateBranch("repair-child", "stale", "stale")
+	sc, err := stcontext.Load(repo.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.Graph = g
+	if err := sc.Save(); err != nil {
+		t.Fatal(err)
+	}
+	out := runSt(t, "graph", "repair", "--dry-run")
+	assertContains(t, out, "repair-child")
+	if loadGraph(t, repo).Branches["repair-child"].BaseSHA != "stale" {
+		t.Fatal("dry run changed the graph")
+	}
+	runSt(t, "graph", "repair")
+	repaired := loadGraph(t, repo)
+	if repaired.Branches["repair-child"].BaseSHA != parent || repaired.Branches["repair-child"].HeadSHA != child {
+		t.Fatalf("child metadata not repaired: %+v", repaired.Branches["repair-child"])
+	}
+	if repaired.Branches["repair-parent"].Parent != root {
+		t.Fatal("parent relationship changed")
+	}
+}
+
+func TestRestackRefusesUntrustworthyBase(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	runSt(t, "new", "unsafe-parent")
+	repo.CreateFile("shared.txt", "parent")
+	repo.AddAndCommit("parent change")
+	runSt(t, "append", "unsafe-child")
+	repo.CreateFile("child.txt", "child")
+	repo.AddAndCommit("child change")
+	child, _ := repo.RunGit("rev-parse", "unsafe-child")
+	g := loadGraph(t, repo)
+	// Simulate a restored child whose parent was rewritten independently.
+	repo.Checkout(root)
+	repo.CreateFile("shared.txt", "rewritten")
+	repo.AddAndCommit("rewritten parent")
+	repo.RunGit("branch", "-f", "unsafe-parent", "HEAD")
+	g.Branches["unsafe-child"].BaseSHA, _ = repo.RunGit("rev-parse", "unsafe-parent")
+	sc, err := stcontext.Load(repo.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.Graph = g
+	if err := sc.Save(); err != nil {
+		t.Fatal(err)
+	}
+	repo.Checkout("unsafe-child")
+	out := runStExpectError(t, "restack")
+	assertContains(t, out, "st graph repair")
+	after, _ := repo.RunGit("rev-parse", "unsafe-child")
+	if after != child {
+		t.Fatal("restack rewrote the child before detecting unsafe metadata")
+	}
+	repo.RunGit("rebase", "--abort")
+	out = runStExpectError(t, "graph", "repair")
+	assertContains(t, out, "cannot repair unsafe-child")
+}
+
+func TestRestoreOneRepairsGraph(t *testing.T) {
+	repo, _ := setupRepoWithStack(t)
+	runSt(t, "new", "restore-one")
+	repo.CreateFile("original.txt", "original")
+	repo.AddAndCommit("original")
+	original, _ := repo.RunGit("rev-parse", "restore-one")
+	repo.RunGit("branch", "backup/auto/restore-one/9999999999", "restore-one")
+	repo.CreateFile("later.txt", "later")
+	repo.AddAndCommit("later")
+	runSt(t, "restore", "restore-one")
+	g := loadGraph(t, repo)
+	if g.Branches["restore-one"].HeadSHA != original {
+		t.Fatalf("restore did not update graph head: %+v", g.Branches["restore-one"])
+	}
+}
+
+func TestGraphRepairOnlyCurrentStack(t *testing.T) {
+	repo, root := setupRepoWithStack(t)
+	runSt(t, "new", "repair-left")
+	repo.CreateFile("left.txt", "left")
+	repo.AddAndCommit("left")
+	left, _ := repo.RunGit("rev-parse", "repair-left")
+	runSt(t, "append", "repair-left-child")
+	repo.CreateFile("left-child.txt", "child")
+	repo.AddAndCommit("left child")
+	repo.Checkout(root)
+	runSt(t, "new", "repair-right")
+	repo.CreateFile("right.txt", "right")
+	repo.AddAndCommit("right")
+	repo.Checkout("repair-left-child")
+	g := loadGraph(t, repo)
+	g.Branches["repair-left"].BaseSHA = "stale-left"
+	g.Branches["repair-right"].BaseSHA = "stale-right"
+	sc, err := stcontext.Load(repo.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.Graph = g
+	if err := sc.Save(); err != nil {
+		t.Fatal(err)
+	}
+	out := runSt(t, "graph", "repair")
+	assertContains(t, out, "repair-left")
+	if strings.Contains(out, "repair-right") {
+		t.Fatalf("repaired sibling stack: %s", out)
+	}
+	repaired := loadGraph(t, repo)
+	if repaired.Branches["repair-left"].HeadSHA != left || repaired.Branches["repair-left"].BaseSHA == "stale-left" {
+		t.Fatal("current stack was not repaired")
+	}
+	if repaired.Branches["repair-right"].BaseSHA != "stale-right" {
+		t.Fatal("sibling stack changed")
 	}
 }

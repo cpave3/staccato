@@ -72,6 +72,7 @@ st sync --down
 | `st graph share`      | Share the graph via a pushable/fetchable git ref   |                               |
 | `st graph local`      | Move the graph back to local-only storage          |                               |
 | `st graph which`      | Show current graph storage mode                    |                               |
+| `st graph repair`     | Reconcile current stack with local branch history  | `--dry-run`                   |
 | `st mcp`              | Start the MCP server (stdio transport)             |                               |
 
 ### `st attach`
@@ -102,6 +103,10 @@ Use `--down` to pull and restack without pushing. Use `--dry-run` to see what wo
 ### `st restack`
 
 Rebases all branches in your lineage onto their parents. Use `--to-current` to restack only up to the current branch (useful when you're not at the tip of the stack).
+
+### `st graph repair`
+
+After restoring or manually moving branch refs, run `st graph repair --dry-run` to inspect proposed base/head corrections, then `st graph repair` to apply them. Only the checked-out branch's top-level stack and its descendants are inspected; sibling stacks are unchanged. Check out a tracked branch first, and finish or abort any in-progress rebase. If the original fork point cannot be identified, repair refuses to guess. Restack also stops before rewriting branches when a recorded base is not in the branch's history.
 
 ### `st reviews`
 

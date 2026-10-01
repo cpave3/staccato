@@ -258,56 +258,41 @@ func (e *Engine) restackBranches(g *graph.Graph, branches []string) (*Result, er
 		}
 	}
 
-	// Rebase each branch onto its parent
+	// Capture fork points before rewriting any parent in this lineage.
+	// A rewritten parent cannot be used to infer the child's original boundary.
+	upstreams := make(map[string]string, len(branchesToRestack))
 	for _, branch := range branchesToRestack {
 		b, exists := g.GetBranch(branch)
 		if !exists {
-			result.Error = fmt.Errorf("branch %s not found in graph", branch)
-			return result, result.Error
+			return result, fmt.Errorf("branch %s not found in graph", branch)
 		}
+		inBranch, err := e.git.IsAncestor(b.BaseSHA, branch)
+		if err != nil || !inBranch {
+			return result, fmt.Errorf("unsafe replay boundary for %s: graph disagrees with branch history; run st graph repair before restacking", branch)
+		}
+		parentSHA, err := e.git.GetCommitSHA(b.Parent)
+		if err != nil {
+			return result, err
+		}
+		parentInBranch, err := e.git.IsAncestor(parentSHA, branch)
+		if err != nil {
+			return result, err
+		}
+		if parentInBranch {
+			upstreams[branch] = parentSHA
+		} else {
+			upstreams[branch] = b.BaseSHA
+		}
+	}
 
-		// Checkout the branch
+	// Rebase each branch onto its parent.
+	for _, branch := range branchesToRestack {
+		b, _ := g.GetBranch(branch)
 		if err := e.git.CheckoutBranch(branch); err != nil {
 			result.Error = fmt.Errorf("failed to checkout %s: %w", branch, err)
 			return result, result.Error
 		}
-
-		// Use --onto to replay only the branch's own commits onto the parent.
-		// We pick the best fork-point: whichever of the stored BaseSHA or
-		// the live merge-base is a more recent ancestor of the branch.
-		// The stored BaseSHA can become stale after manual rebases or trunk
-		// fast-forwards; the merge-base can be too old when the parent was
-		// just rebased (e.g., during a chain restack). Using the more recent
-		// one ensures minimal commit replay in both scenarios.
-		var rebaseErr error
-		upstream := b.BaseSHA
-		// A fork-point is only usable if it's in the branch's history;
-		// otherwise upstream..branch spans unrelated commits and the rebase
-		// replays history that was never part of this branch.
-		if upstream != "" {
-			isAnc, err := e.git.IsAncestor(upstream, branch)
-			if err != nil || !isAnc {
-				upstream = ""
-			}
-		}
-		mergeBase, mbErr := e.git.GetMergeBase(branch, b.Parent)
-		if mbErr == nil && mergeBase != "" {
-			if upstream == "" {
-				upstream = mergeBase
-			} else {
-				// Use whichever is a descendant of the other (more recent).
-				// If merge-base is a descendant of BaseSHA, it's more recent.
-				isAnc, err := e.git.IsAncestor(upstream, mergeBase)
-				if err == nil && isAnc {
-					upstream = mergeBase
-				}
-			}
-		}
-		if upstream != "" {
-			rebaseErr = e.git.RebaseOnto(b.Parent, upstream)
-		} else {
-			rebaseErr = e.git.Rebase(b.Parent)
-		}
+		rebaseErr := e.git.RebaseOnto(b.Parent, upstreams[branch])
 
 		if rebaseErr != nil {
 			// Check if there's a conflict

@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/spf13/cobra"
 )
 
 func graphCmd() *cobra.Command {
@@ -19,6 +19,7 @@ func graphCmd() *cobra.Command {
 	cmd.AddCommand(graphShareCmd())
 	cmd.AddCommand(graphLocalCmd())
 	cmd.AddCommand(graphWhichCmd())
+	cmd.AddCommand(graphRepairCmd())
 	return cmd
 }
 
