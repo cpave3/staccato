@@ -17,7 +17,7 @@ st/
 │   ├── switch.go          # switchTUI model + switch command
 │   ├── new.go, append.go, insert.go, restack.go, continue.go
 │   ├── backup.go, restore.go, log.go, status.go, pr.go
-│   └── main_test.go       # Comprehensive E2E + TUI model tests
+│   └── *_test.go          # E2E + TUI model tests by command/behavior
 ├── internal/testutil/
 │   └── git.go             # Test helpers (GitRepo, isolated repos)
 ├── pkg/
@@ -141,7 +141,7 @@ saveContext(g, repoPath, gitRunner) → writes to ref (shared) or file (local)
 ## Testing
 
 ### Test Architecture
-- **Single test file**: `cmd/st/main_test.go` covers all 11 commands + TUI model tests
+- **Test files by area**: `cmd/st/main_test.go` holds shared helpers and `TestMain`; other `cmd/st/*_test.go` files cover commands, workflows, and TUI models.
 - **`TestMain`**: Builds binary once to temp file, used by all test functions
 - **No `t.Parallel()`**: Tests use `os.Chdir` which is process-global
 - **Helpers**: `setupRepo`, `setupRepoWithStack`, `runSt`, `runStExpectError`, `loadGraph`, `graphContains`
