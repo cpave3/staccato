@@ -31,6 +31,31 @@ func TestBackup(t *testing.T) {
 		}
 	})
 
+	t.Run("says_where_the_snapshot_is", func(t *testing.T) {
+		setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		// Without -v: the name is what you need to find the snapshot again.
+		out := runSt(t, "backup")
+
+		assertContains(t, out, "backup/manual/")
+		assertContains(t, out, "1 branch")
+	})
+
+	t.Run("can_be_run_twice_in_a_row", func(t *testing.T) {
+		repo, _ := setupRepoWithStack(t)
+		runSt(t, "new", "f1")
+
+		// Snapshot names have one-second resolution.
+		runSt(t, "backup")
+		runSt(t, "backup")
+
+		snapshots := gitOut(t, repo, "branch", "--list", "backup/manual/*/f1")
+		if n := len(strings.Fields(snapshots)); n != 2 {
+			t.Errorf("found %d snapshots of f1, want 2:\n%s", n, snapshots)
+		}
+	})
+
 	t.Run("error_no_branches", func(t *testing.T) {
 		setupRepoWithStack(t)
 		out := runStExpectError(t, "backup")

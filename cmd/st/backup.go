@@ -15,12 +15,11 @@ func backupCmd() *cobra.Command {
 backup/manual/<date>_<time>/<branch>. Unlike the automatic backups that
 restacking makes and removes again, these stay until you delete them.
 
-The snapshot's name is printed only with -v; 'st backup list' shows it either
-way. To go back to a snapshot, point the branch at its backup with git:
-'git branch -f <branch> backup/manual/<date>_<time>/<branch>', from another
-branch. 'st restore' does not use these snapshots.`,
-		Example: `st backup
-st backup -v`,
+It prints where the snapshot is, and 'st backup list' lists them all. To go
+back to a snapshot, point the branch at its backup with git, from another
+branch: 'git branch -f <branch> backup/manual/<date>_<time>/<branch>'.
+'st restore' does not use these snapshots.`,
+		Example: `st backup`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {
@@ -45,7 +44,7 @@ st backup -v`,
 				return fmt.Errorf("backup failed: %w", err)
 			}
 
-			printer.Info("Backup created: %s (%d branches)", timestamp, len(branches))
+			printer.Success("Backed up %d branch(es) to %s/%s/%s/<branch>", len(branches), backup.BackupPrefix, backup.ManualSubpath, timestamp)
 			return nil
 		},
 	}

@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	BackupPrefix      = "backup"
-	AutoSubpath       = "auto"
-	ManualSubpath     = "manual"
+	BackupPrefix       = "backup"
+	AutoSubpath        = "auto"
+	ManualSubpath      = "manual"
 	LegacyManualPrefix = "backups"
 )
 
@@ -28,8 +28,8 @@ const (
 
 // BackupInfo describes a single backup branch.
 type BackupInfo struct {
-	BranchRef    string     // Full git branch ref
-	SourceBranch string     // Original branch name
+	BranchRef    string // Full git branch ref
+	SourceBranch string // Original branch name
 	Kind         BackupKind
 	Timestamp    time.Time
 }
@@ -259,17 +259,41 @@ func (m *Manager) extractTimestamp(backupName string) int64 {
 // Manual backups use backup/manual/<timestamp>/<branch> naming.
 // Returns the timestamp label used in the backup branch names.
 func (m *Manager) CreateManualBackup(branches []string) (string, error) {
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	timestamp := m.freeManualTimestamp(branches)
 
 	for _, branch := range branches {
-		backupName := fmt.Sprintf("%s/%s/%s/%s", BackupPrefix, ManualSubpath, timestamp, branch)
-		err := m.git.CopyBranch(branch, backupName)
+		err := m.git.CopyBranch(branch, manualBackupName(timestamp, branch))
 		if err != nil {
 			return timestamp, fmt.Errorf("failed to backup branch %s: %w", branch, err)
 		}
 	}
 
 	return timestamp, nil
+}
+
+// freeManualTimestamp returns the timestamp that names a new manual backup of
+// branches. The names have one-second resolution, so a backup made within a
+// second of another takes the next second that is still free.
+func (m *Manager) freeManualTimestamp(branches []string) string {
+	for at := time.Now(); ; at = at.Add(time.Second) {
+		timestamp := at.Format("2006-01-02_15-04-05")
+		taken := false
+		for _, branch := range branches {
+			if exists, _ := m.git.BranchExists(manualBackupName(timestamp, branch)); exists {
+				taken = true
+				break
+			}
+		}
+		if !taken {
+			return timestamp
+		}
+	}
+}
+
+// manualBackupName is the branch that holds the manual backup of branch taken
+// at timestamp.
+func manualBackupName(timestamp, branch string) string {
+	return fmt.Sprintf("%s/%s/%s/%s", BackupPrefix, ManualSubpath, timestamp, branch)
 }
 
 // parseBackupBranch parses a branch name into a BackupInfo.

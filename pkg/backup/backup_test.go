@@ -433,6 +433,43 @@ func TestGetBackupPath(t *testing.T) {
 	}
 }
 
+func TestBackupManager_CreateManualBackup_TwiceInOneSecond(t *testing.T) {
+	_, gitRunner, manager := initTestRepo(t)
+
+	first, err := manager.CreateManualBackup([]string{"main"})
+	if err != nil {
+		t.Fatalf("failed to create manual backup: %v", err)
+	}
+	// Backup names have one-second resolution; the second must not collide.
+	second, err := manager.CreateManualBackup([]string{"main"})
+	if err != nil {
+		t.Fatalf("a second manual backup in the same second failed: %v", err)
+	}
+	if first == second {
+		t.Fatalf("both backups are named %q", first)
+	}
+	for _, ts := range []string{first, second} {
+		if exists, _ := gitRunner.BranchExists(fmt.Sprintf("backup/manual/%s/main", ts)); !exists {
+			t.Errorf("expected manual backup branch backup/manual/%s/main to exist", ts)
+		}
+	}
+
+	// Both are still recognised as manual backups of main.
+	all, err := manager.ListAllBackups()
+	if err != nil {
+		t.Fatalf("ListAllBackups: %v", err)
+	}
+	manual := 0
+	for _, b := range all {
+		if b.Kind == "manual" && b.SourceBranch == "main" {
+			manual++
+		}
+	}
+	if manual != 2 {
+		t.Errorf("listed %d manual backups of main, want 2: %+v", manual, all)
+	}
+}
+
 func TestBackupManager_CreateManualBackup_NewNaming(t *testing.T) {
 	_, gitRunner, manager := initTestRepo(t)
 

@@ -15,7 +15,9 @@ func deleteCmd() *cobra.Command {
 		Short: "Delete a branch and take it out of the stack",
 		Long: `Removes the branch from the stack, gives its children its parent as their new
 parent, and deletes the git branch. If it is the current branch, its parent is
-checked out first. Run 'st restack' afterwards to rebase the children.
+checked out first. The children keep the deleted branch's commits, which become
+part of their own change. Afterwards, run 'st top' and 'st restack' to bring
+the stack's record up to date.
 
 When the repository has a remote, a branch that was never pushed is refused
 unless --force is given. To keep the git branch, use 'st detach'.`,

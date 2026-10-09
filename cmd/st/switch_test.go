@@ -73,6 +73,45 @@ func TestSwitchTUI(t *testing.T) {
 		}
 	})
 
+	t.Run("n_and_N_step_through_the_search_matches", func(t *testing.T) {
+		model := makeSwitchModel([]branchItem{
+			{name: "main", current: true, depth: 0},
+			{name: "feature-api", depth: 1},
+			{name: "docs", depth: 1},
+			{name: "feature-ui", depth: 2},
+			{name: "feature-tests", depth: 3},
+		})
+		press := func(m switchTUI, msg tea.KeyMsg) switchTUI {
+			updated, _ := m.Update(msg)
+			return updated.(switchTUI)
+		}
+		key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+
+		// Search for "feature" and confirm it: the first match is selected.
+		m := press(model, key('/'))
+		for _, ch := range "feature" {
+			m = press(m, key(ch))
+		}
+		m = press(m, tea.KeyMsg{Type: tea.KeyEnter})
+		if m.list.Index() != 1 {
+			t.Fatalf("after the search, selected index = %d, want the first match at 1", m.list.Index())
+		}
+
+		// n goes to the next match and wraps after the last one; N goes back.
+		for _, step := range []struct {
+			key  rune
+			want int
+		}{{'n', 3}, {'n', 4}, {'n', 1}, {'N', 4}, {'N', 3}} {
+			m = press(m, key(step.key))
+			if m.list.Index() != step.want {
+				t.Fatalf("after %c, selected index = %d, want %d", step.key, m.list.Index(), step.want)
+			}
+		}
+		if m.selected != "" || m.quitting {
+			t.Error("stepping through matches selected a branch or quit")
+		}
+	})
+
 	t.Run("q_quits", func(t *testing.T) {
 		branches := []branchItem{
 			{name: "main", current: true, depth: 0},

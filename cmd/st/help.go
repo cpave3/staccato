@@ -330,7 +330,7 @@ const primerConventions = `
   followed by its usage if it was invoked wrongly. Warnings do not change the
   exit status and print with the normal output.
 - ` + "`--json`" + `, on the commands that list it, prints machine-readable output.
-- ` + "`-v`" + ` prints more detail. A few commands confirm what they did only with it.
+- ` + "`-v`" + ` prints more detail about what a command does.
 - ` + "`st switch`, `st backup clean`" + `, and ` + "`st attach`" + ` without ` + "`--parent`" + ` or ` + "`--auto`" + `
   are interactive and need a terminal. In a script or an agent session use
   ` + "`git checkout <branch>`" + ` and ` + "`st attach --parent`" + ` instead.

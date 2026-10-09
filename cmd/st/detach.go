@@ -12,9 +12,11 @@ func detachCmd() *cobra.Command {
 		Short: "Stop tracking a branch, keeping the git branch",
 		Long: `Removes the branch from the stack; without [branch], the current branch. The
 git branch and its commits are left alone. Its children are given its parent
-as their new parent: run 'st restack' afterwards to rebase them onto it.
+as their new parent. They keep the detached branch's commits, which become
+part of their own change.
 
-To delete the git branch as well, use 'st delete'.`,
+Afterwards, run 'st restack' from the tip of the stack to bring the stack's
+record up to date. To delete the git branch as well, use 'st delete'.`,
 		Example: `st detach
 st detach feature/old`,
 		Args: cobra.MaximumNArgs(1),
@@ -69,7 +71,7 @@ st detach feature/old`,
 					names = append(names, c.Name)
 				}
 				printer.Println("  Reparented %d child branch(es) to '%s': %v", len(children), parent, names)
-				printer.Println("  Run 'st restack' to update the reparented branches")
+				printer.Println("  Run 'st restack' from the tip of the stack to update the reparented branches")
 			}
 
 			return nil

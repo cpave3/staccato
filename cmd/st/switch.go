@@ -116,6 +116,17 @@ func (s switchTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.searchQuery = ""
 			s.updateMatches()
 			return s, nil
+		case "n", "N":
+			// Step through the matches of the last search, wrapping at either end.
+			if len(s.matches) > 0 {
+				step := 1
+				if msg.String() == "N" {
+					step = len(s.matches) - 1
+				}
+				s.matchIndex = (s.matchIndex + step) % len(s.matches)
+				s.list.Select(s.matches[s.matchIndex])
+				return s, nil
+			}
 		case "enter":
 			// Use index instead of type assertion (Bubble Tea list doesn't preserve custom types)
 			idx := s.list.Index()
@@ -140,6 +151,7 @@ func (s switchTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (s *switchTUI) updateMatches() {
 	s.matches = []int{}
+	s.matchIndex = 0
 	if s.searchQuery == "" {
 		return
 	}
@@ -253,7 +265,8 @@ func switchCmdFunc() *cobra.Command {
 		Short: "Pick a branch of the stack to check out, interactively",
 		Long: `Opens the stack as a tree in the terminal. Move with the arrow keys or j and
 k, press enter to check out the selected branch, and q or esc to leave. Press
-/ to search: type part of a branch name, then enter to jump to the first match.
+/ to search: type part of a branch name, then enter to jump to the first
+match, and n or N to go to the next or the previous one.
 
 Interactive: it needs a terminal. In a script or an agent session, read the
 branches from 'st log' and use 'git checkout <branch>', 'st up' or 'st down'.`,
