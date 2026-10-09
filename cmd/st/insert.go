@@ -3,19 +3,27 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/restack"
+	"github.com/spf13/cobra"
 )
 
 func insertCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "insert <branch-name>",
-		Short: "Insert a branch before the current branch",
-		Long: `Inserts a new branch before the current branch in the stack.
-The current branch and all downstream branches will be reparented and restacked.`,
-		Args: cobra.ExactArgs(1),
+	return withArgs(&cobra.Command{
+		Use:   "insert <branch>",
+		Short: "Insert an empty branch below the current branch",
+		Long: `Creates <branch> on the current branch's parent, makes the current branch its
+child, restacks the current branch and everything above it, and checks out the
+new branch. Use it to put a change underneath work that already exists.
+
+The new branch starts with no commits of its own. After committing to it, run
+'st top' and 'st restack' to rebase the branches above onto it.
+
+The affected branches are backed up first. If the restack stops on a conflict,
+resolve it and run 'st continue'.`,
+		Example: `st insert feature/schema`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			branchName := args[0]
 
@@ -89,13 +97,13 @@ The current branch and all downstream branches will be reparented and restacked.
 			result, err := engine.Restack(g, branchName)
 			if err != nil {
 				if result.Conflicts {
-						// Save restack state so st continue knows which branches to continue
-						restack.SaveRestackState(git, &restack.RestackState{
-							Lineage: affectedBranches,
-						})
-						printer.ConflictDetected(result.ConflictsAt)
-						return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
-					}
+					// Save restack state so st continue knows which branches to continue
+					restack.SaveRestackState(git, &restack.RestackState{
+						Lineage: affectedBranches,
+					})
+					printer.ConflictDetected(result.ConflictsAt)
+					return fmt.Errorf("conflict during restack at '%s' — resolve the conflicts and run 'st continue'", result.ConflictsAt)
+				}
 
 				// Restore backups on error
 				printer.Error("Restack failed, restoring from backups...")
@@ -120,5 +128,5 @@ The current branch and all downstream branches will be reparented and restacked.
 
 			return nil
 		},
-	}
+	}, argDoc{"branch", "Name of the branch to create"})
 }

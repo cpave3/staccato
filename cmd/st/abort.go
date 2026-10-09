@@ -11,9 +11,11 @@ import (
 func abortCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "abort",
-		Short: "Abort an in-progress rebase",
-		Long:  "Cancels the current rebase operation, clears restack state, and restores from backups if available.",
-		Args:  cobra.NoArgs,
+		Short: "Cancel a restack that stopped on a conflict",
+		Long: `Aborts the rebase in progress and restores the branches of the restack from
+the backups made when it started, so that the stack is as it was before.`,
+		Example: `st abort`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {

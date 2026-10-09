@@ -3,16 +3,22 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/hooks"
+	"github.com/spf13/cobra"
 )
 
 func appendCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "append <branch-name>",
-		Short: "Create a child branch from the current branch",
-		Long:  "Creates a new branch from the current branch and adds it as a child in the stack.",
-		Args:  cobra.ExactArgs(1),
+	return withArgs(&cobra.Command{
+		Use:   "append <branch>",
+		Short: "Create a branch stacked on top of the current branch",
+		Long: `Creates <branch> at the current branch's tip, records the current branch as
+its parent, and checks it out. Uncommitted changes come along, so commit the
+current branch's work first.
+
+The current branch has to be the trunk or a branch in the stack; add one with
+'st attach'. From the trunk this does the same as 'st new'.`,
+		Example: `st append feature/frontend`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			branchName := args[0]
 
@@ -70,5 +76,5 @@ func appendCmd() *cobra.Command {
 
 			return nil
 		},
-	}
+	}, argDoc{"branch", "Name of the branch to create"})
 }

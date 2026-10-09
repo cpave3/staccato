@@ -52,6 +52,8 @@ st sync --down
 
 ## Commands
 
+Every command documents itself: `st --help` lists them all with examples, `st <command> --help` gives a command's usage, arguments, options and examples, and `st help` prints a primer on the concepts and main workflows. The table below is a summary.
+
 | Command               | Description                                        | Flags                         |
 | --------------------- | -------------------------------------------------- | ----------------------------- |
 | `st new <branch>`     | Create a new branch from root/trunk                |                               |
@@ -61,14 +63,14 @@ st sync --down
 | `st continue`         | Resume restack after conflict resolution           |                               |
 | `st attach [branch]`  | Interactively adopt/relocate a branch in the stack | `--auto`, `--parent <branch>` |
 | `st switch`           | Interactive branch switcher                        |                               |
-| `st log`              | Display stack hierarchy                            |                               |
+| `st log`              | Display stack hierarchy                            | `--json`                      |
 | `st sync`             | Fetch, detect merged branches, restack & push      | `--dry-run`, `--down`         |
 | `st backup`           | Create a manual backup of all stack branches       |                               |
 | `st restore [branch]` | Restore from backup                                | `--all`                       |
 | `st pr make`          | Create a PR for the current branch                 |                               |
 | `st pr view`          | View the PR for the current branch                 |                               |
 | `st reviews`          | Collect stack PR review feedback                   | `--current`, `--to-current`, `--out <path>` |
-| `st status`           | Show PR status for the entire stack                |                               |
+| `st status`           | Show PR status for the entire stack                | `--json`                      |
 | `st graph share`      | Share the graph via a pushable/fetchable git ref   |                               |
 | `st graph local`      | Move the graph back to local-only storage          |                               |
 | `st graph which`      | Show current graph storage mode                    |                               |
@@ -76,7 +78,6 @@ st sync --down
 | `st split describe [branch]` | Print a branch's commits and changed files as JSON | |
 | `st split apply <plan>` | Split a branch into stacked branches from a JSON plan | `--dry-run`, `--exec <cmd>`, `--json` |
 | `st exec <command>`   | Run a command on every branch of the current stack and report which pass | `--fail-fast`, `--json` |
-| `st mcp`              | Start the MCP server (stdio transport)             |                               |
 
 ### `st attach`
 
@@ -282,7 +283,7 @@ Each hook receives:
 | 2         | Block the operation (`pre-*` hooks only) |
 | Other     | Warning — print stderr and continue |
 
-Hooks have a 30-second timeout. MCP tools fire the same hooks as their CLI equivalents.
+Hooks have a 30-second timeout.
 
 ## Configuration
 
@@ -322,56 +323,20 @@ In shared mode:
 }
 ```
 
-## MCP Server
+## Using st from an AI agent
 
-Staccato includes an MCP (Model Context Protocol) server, allowing LLMs to programmatically manage stacked branches. This is useful for splitting monolithic PRs into focused stacks.
-
-### Starting the server
+`st` is driven from a shell, and its help is written to be enough for an agent that has never used it:
 
 ```bash
-st mcp
+st help                 # primer: concepts, the main workflows, every command
+st --help               # every command, with examples
+st <command> --help     # usage, arguments, options and examples for one command
 ```
 
-This runs the MCP server over stdio. You don't typically run this directly — instead, configure your LLM client to launch it.
-
-### Adding to Claude Code
-
-```bash
-claude mcp add staccato --scope user -- st mcp
-```
-
-### Adding to OpenCode
-
-Add to your `opencode.json`:
-
-```json
-{
-  "mcpServers": {
-    "staccato": {
-      "command": "st",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-### Available tools (22)
-
-**Git helpers**: `st_git_log`, `st_git_diff_stat`, `st_git_cherry_pick`, `st_git_checkout`, `st_git_reset`, `st_git_add`, `st_git_commit`, `st_git_status`, `st_git_diff`
-
-**Stack info**: `st_log`, `st_status`, `st_current`
-
-**Branch creation**: `st_new`, `st_append`, `st_insert`
-
-**Management**: `st_attach`, `st_restack`, `st_continue`
-
-**Sync/PR**: `st_sync`, `st_pr`
-
-**Split**: `st_split_describe`, `st_split_apply`
-
-### Prompt
-
-The server exposes a `split-monolithic-pr` prompt that guides an LLM through choosing where to cut a large branch and carrying the split out with `st_split_describe` and `st_split_apply`. Accepts `base_branch` and `source_branch` arguments.
+- `st log --json` and `st status --json` print the stack as a JSON tree; `st split describe`, `st split apply --json` and `st exec --json` print JSON too.
+- Help goes to standard output and exits 0. A command that fails exits 1 with the reason on standard error, followed by its usage if it was invoked wrongly.
+- `st switch`, `st backup clean`, and `st attach` without `--parent` or `--auto` are interactive. The help of each names the non-interactive alternative.
+- `st skill install` installs a skill that tells an agent when to reach for `st` and to start from `st help`.
 
 ## Development
 

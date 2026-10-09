@@ -13,10 +13,21 @@ func restoreCmd() *cobra.Command {
 	var all bool
 
 	cmd := &cobra.Command{
-		Use:   "restore [branch-name]",
-		Short: "Restore branch(es) from backup",
-		Long: `Restores a branch or all branches from their backups.
-Use this to recover from failed restack operations.`,
+		Use:   "restore [branch]",
+		Short: "Put a branch back from its automatic backup",
+		Long: `Commands that restack back up the branches they rewrite and remove the backups
+when they succeed, so a backup is left only when one failed or was
+interrupted. This resets the branch to its most recent such backup and checks
+it out; without [branch], the current branch.
+
+--all restores every branch of the current stack that has a backup, after
+aborting a rebase that is still in progress.
+
+For a restack that stopped on a conflict, 'st abort' is the usual way back.
+Snapshots made by 'st backup' are not used here: see 'st backup --help'.`,
+		Example: `st restore
+st restore feature/api
+st restore --all`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, git, printer, repoPath, err := getContext()
@@ -123,7 +134,7 @@ Use this to recover from failed restack operations.`,
 		},
 	}
 
-	cmd.Flags().BoolVar(&all, "all", false, "Restore all branches in the stack")
+	cmd.Flags().BoolVar(&all, "all", false, "Restore every branch of the current stack that has a backup")
 
-	return cmd
+	return withArgs(cmd, argDoc{"branch", "Branch to restore (default: the current branch)"})
 }

@@ -12,7 +12,7 @@ import (
 // TrunkBranches are common trunk/root branch names that should be auto-detected as roots.
 var TrunkBranches = []string{"main", "master", "develop", "trunk"}
 
-// StaccatoContext holds the shared state needed by both CLI commands and the MCP server.
+// StaccatoContext holds the state a command works with: the stack graph, the git runner and the repository.
 type StaccatoContext struct {
 	Graph    *graph.Graph
 	Git      *git.Runner
@@ -152,18 +152,6 @@ func Load(repoPath string) (*StaccatoContext, error) {
 		gitDir:    gitDir,
 		sharedRef: sharedRef,
 	}, nil
-}
-
-// Reload re-reads the graph from storage. A context that lives longer than one
-// command, like the one the MCP server holds, goes stale as soon as another
-// process changes the graph.
-func (sc *StaccatoContext) Reload() error {
-	fresh, err := Load(sc.RepoPath)
-	if err != nil {
-		return err
-	}
-	*sc = *fresh
-	return nil
 }
 
 // Save persists the graph to either the shared ref or local file.

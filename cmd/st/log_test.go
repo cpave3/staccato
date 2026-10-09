@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -24,6 +26,30 @@ func TestLog(t *testing.T) {
 
 		out := runSt(t, "log")
 		assertContains(t, out, "●")
+	})
+
+	t.Run("prints_the_tree_as_json", func(t *testing.T) {
+		repo, root := setupRepoWithStack(t)
+		// Two stacks on the trunk: api → ui, and docs.
+		runSt(t, "new", "docs")
+		runSt(t, "new", "api")
+		runSt(t, "append", "ui")
+		repo.Checkout("api")
+
+		out := runSt(t, "log", "--json")
+
+		var tree stackNode
+		if err := json.Unmarshal([]byte(out), &tree); err != nil {
+			t.Fatalf("st log --json is not JSON: %v\n%s", err, out)
+		}
+		// Siblings come in name order, so the output is the same every time.
+		want := stackNode{Branch: root, Children: []stackNode{
+			{Branch: "api", Current: true, Children: []stackNode{{Branch: "ui"}}},
+			{Branch: "docs"},
+		}}
+		if !reflect.DeepEqual(tree, want) {
+			t.Errorf("tree = %+v, want %+v", tree, want)
+		}
 	})
 }
 

@@ -10,8 +10,9 @@ import (
 
 func skillCmd() *cobra.Command {
 	parent := &cobra.Command{
-		Use:   "skill",
-		Short: "Manage Claude Code skills",
+		Use:     "skill",
+		Short:   "Install the Staccato skill for AI coding agents",
+		Example: `st skill install`,
 	}
 
 	parent.AddCommand(skillInstallCmd())
@@ -21,7 +22,10 @@ func skillCmd() *cobra.Command {
 func skillInstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install the Staccato skill into Claude Code",
+		Short: "Install the Staccato skill with the skills CLI",
+		Long: `Runs 'npx -y skills install cpave3/staccato/skill', passing its prompts and
+output through. Needs Node.js (npx) on the PATH.`,
+		Example: `st skill install`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			npx, err := exec.LookPath("npx")
 			if err != nil {

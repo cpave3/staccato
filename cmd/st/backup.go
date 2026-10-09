@@ -3,21 +3,24 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/spf13/cobra"
 )
 
 func backupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Create a manual backup or manage backups",
-		Long: `Creates a manual snapshot of every branch in the stack (excluding the root).
-Unlike automatic backups created during restack/insert, manual backups persist
-until you delete them.
+		Short: "Snapshot every branch of the stack",
+		Long: `Copies every branch st tracks to a backup branch named
+backup/manual/<date>_<time>/<branch>. Unlike the automatic backups that
+restacking makes and removes again, these stay until you delete them.
 
-Subcommands:
-  list   List all backup branches
-  clean  Interactively select and delete old backups`,
+The snapshot's name is printed only with -v; 'st backup list' shows it either
+way. To go back to a snapshot, point the branch at its backup with git:
+'git branch -f <branch> backup/manual/<date>_<time>/<branch>', from another
+branch. 'st restore' does not use these snapshots.`,
+		Example: `st backup
+st backup -v`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {
@@ -56,7 +59,10 @@ Subcommands:
 func backupListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List all backup branches",
+		Short: "List the backup branches",
+		Long: `Lists every backup, automatic and manual, with its kind, when it was taken and
+the branch it was taken from.`,
+		Example: `st backup list`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {

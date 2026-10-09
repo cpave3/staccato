@@ -15,8 +15,8 @@ import (
 func execCmd() *cobra.Command {
 	var failFast, asJSON bool
 	cmd := &cobra.Command{
-		Use:   "exec [--fail-fast] [--json] <command> [args...]",
-		Short: "Run a command on every branch of the current stack and report which pass",
+		Use:   "exec [options] <command> [args...]",
+		Short: "Run a command on every branch and report which pass",
 		Long: `Runs a command on every branch of the current stack, one branch at a time,
 and reports for each branch whether the command passed or failed. Use it to
 find out which branches of a stack build, pass their tests, or lint cleanly.
@@ -107,7 +107,7 @@ Exit status:
 
   0  the command passed on every branch
   1  the command failed on at least one branch, the run was interrupted, or
-     st exec could not run. The last line on standard error says which.
+     st exec could not run. The message on standard error says which.
 
 What happens to your checkout:
 
@@ -126,24 +126,15 @@ What happens to your checkout:
     are incremental. A command that needs a clean start has to clean up
     itself.
   - A branch that cannot be checked out, for example because an untracked
-    file is in the way, is reported as failed and the run goes on.
-
-st exec is not available through the MCP server: st_run refuses it, because it
-runs an arbitrary shell command. Run it from a shell.`,
-		Example: `  # Which branches of the stack build?
-  st exec "go build ./..."
-
-  # Stop at the first branch whose tests fail
-  st exec --fail-fast "npm ci && npm test"
-
-  # Only the report, as JSON, for a script or an agent
-  st exec --json "task build" 2>/dev/null
-
-  # Keep each branch's output in a file of its own
-  st exec 'task build > "/tmp/build-$ST_EXEC_INDEX.log" 2>&1'`,
+    file is in the way, is reported as failed and the run goes on.`,
+		Example: `st exec "go build ./..."
+st exec --fail-fast "npm ci && npm test"
+st exec --json "task build" 2>/dev/null
+st exec go test -v ./...
+st exec 'task build > "/tmp/build-$ST_EXEC_INDEX.log" 2>&1'`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return fmt.Errorf("st exec needs a command to run, for example: st exec \"task build\" — see 'st exec --help'")
+				return fmt.Errorf("st exec needs a command to run, for example: st exec \"task build\"")
 			}
 			// A first word with a space in it is a quoted shell command, and
 			// the words after it would be handed to a program of that name.
@@ -152,8 +143,7 @@ runs an arbitrary shell command. Run it from a shell.`,
 			}
 			return nil
 		},
-		DisableFlagsInUseLine: true,
-		SilenceUsage:          true,
+		SilenceUsage: true,
 		// main prints the returned error; cobra would print it a second time.
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -193,7 +183,9 @@ runs an arbitrary shell command. Run it from a shell.`,
 	// Everything after the command's first word belongs to the command, so
 	// that 'st exec go test -v ./...' does not read -v as a flag of st.
 	cmd.Flags().SetInterspersed(false)
-	return cmd
+	return withArgs(cmd,
+		argDoc{"command", "A shell command line; or, when args follow, the program to run"},
+		argDoc{"args", "Further words of the command, passed on unchanged"})
 }
 
 // shellCommand turns the arguments of 'st exec' into the command line handed

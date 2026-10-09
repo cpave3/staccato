@@ -10,9 +10,12 @@ import (
 func upCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "up",
-		Short: "Navigate to the child branch",
-		Long:  "Checks out the child branch of the current branch in the stack.",
-		Args:  cobra.NoArgs,
+		Short: "Check out the child of the current branch",
+		Long: `Moves one branch up the stack, away from the trunk. When the current branch
+has several children it lists them and stops: check one out with
+'git checkout <branch>'.`,
+		Example: `st up`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, _, err := getContext()
 			if err != nil {

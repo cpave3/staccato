@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	stcontext "github.com/cpave3/staccato/pkg/context"
@@ -10,6 +12,7 @@ import (
 	"github.com/cpave3/staccato/pkg/graph"
 	"github.com/cpave3/staccato/pkg/output"
 	"github.com/cpave3/staccato/pkg/staleness"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -26,11 +29,83 @@ func isTrunkBranch(name string) bool {
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if strings.HasPrefix(err.Error(), "unknown command ") {
+			fmt.Fprintln(os.Stderr, "Run `st --help` for the list of commands.")
+		}
 		os.Exit(1)
 	}
 }
 
 func init() {
+	// Commands are listed in the order they are added below, which follows
+	// the life of a stack, instead of alphabetically.
+	cobra.EnableCommandSorting = false
+
+	rootCmd = &cobra.Command{
+		Use:   "st",
+		Short: "A deterministic, offline-first Git stack management CLI",
+		Long: `A stack is a chain of branches, each built on the one below it, so that a
+large change can be reviewed as several small pull requests. st records which
+branch is stacked on which, and rebases ("restacks") the branches above when
+one below them changes. Commit with git as usual.`,
+		// main prints the error a command returns, once. A command that was
+		// misused says how it is used; one that failed does not.
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Print more detail about what a command does")
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
+		out := cmd.OutOrStdout()
+		// The banner is decoration for a person at a terminal.
+		if cmd == cmd.Root() && isTerminal(out) {
+			fmt.Fprintf(out, "\n%s\n", banner())
+		}
+		fmt.Fprint(out, helpText(cmd))
+	})
+	rootCmd.SetHelpCommand(helpCmd())
+	rootCmd.SetFlagErrorFunc(usageError)
+
+	// Create branches
+	rootCmd.AddCommand(newCmd())
+	rootCmd.AddCommand(appendCmd())
+	rootCmd.AddCommand(insertCmd())
+	// Move around and look
+	rootCmd.AddCommand(upCmd())
+	rootCmd.AddCommand(downCmd())
+	rootCmd.AddCommand(topCmd())
+	rootCmd.AddCommand(bottomCmd())
+	rootCmd.AddCommand(switchCmdFunc())
+	rootCmd.AddCommand(logCmd())
+	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(statCmd())
+	// Change a stack
+	rootCmd.AddCommand(modifyCmd())
+	rootCmd.AddCommand(restackCmd())
+	rootCmd.AddCommand(continueCmd())
+	rootCmd.AddCommand(abortCmd())
+	rootCmd.AddCommand(moveCmd())
+	rootCmd.AddCommand(attachCmd())
+	rootCmd.AddCommand(detachCmd())
+	rootCmd.AddCommand(deleteCmd())
+	rootCmd.AddCommand(deleteStackCmd())
+	rootCmd.AddCommand(splitCmd())
+	rootCmd.AddCommand(execCmd())
+	// Work with the remote
+	rootCmd.AddCommand(syncCmd())
+	rootCmd.AddCommand(prCmd())
+	rootCmd.AddCommand(reviewsCmd())
+	// Recover and maintain
+	rootCmd.AddCommand(backupCmd())
+	rootCmd.AddCommand(restoreCmd())
+	rootCmd.AddCommand(graphCmd())
+	rootCmd.AddCommand(skillCmd())
+
+	explainMisuse(rootCmd)
+}
+
+// banner renders the staccato wordmark with a horizontal colour gradient.
+func banner() string {
 	bannerLines := []string{
 		` ███████╗ ████████╗  █████╗   ██████╗  ██████╗  █████╗  ████████╗  ██████╗`,
 		` ██╔════╝ ╚══██╔══╝ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗ ╚══██╔══╝ ██╔═══██╗`,
@@ -62,48 +137,13 @@ func init() {
 		}
 		banner += "\n"
 	}
+	return banner
+}
 
-	rootCmd = &cobra.Command{
-		Use:   "st",
-		Short: "A deterministic, offline-first Git stack management CLI",
-		Long: "\n" + banner + "\n\n" +
-			"Staccato provides branch-level stacking with deterministic restacking, automatic backups,\n" +
-			"and lazy attachment for retrofitting existing branches.",
-	}
-
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-
-	// Add subcommands
-	rootCmd.AddCommand(newCmd())
-	rootCmd.AddCommand(appendCmd())
-	rootCmd.AddCommand(insertCmd())
-	rootCmd.AddCommand(restackCmd())
-	rootCmd.AddCommand(continueCmd())
-	rootCmd.AddCommand(attachCmd())
-	rootCmd.AddCommand(restoreCmd())
-	rootCmd.AddCommand(syncCmd())
-	rootCmd.AddCommand(logCmd())
-	rootCmd.AddCommand(switchCmdFunc())
-	rootCmd.AddCommand(backupCmd())
-	rootCmd.AddCommand(prCmd())
-	rootCmd.AddCommand(statusCmd())
-	rootCmd.AddCommand(statCmd())
-	rootCmd.AddCommand(graphCmd())
-	rootCmd.AddCommand(detachCmd())
-	rootCmd.AddCommand(mcpCmd())
-	rootCmd.AddCommand(modifyCmd())
-	rootCmd.AddCommand(deleteCmd())
-	rootCmd.AddCommand(moveCmd())
-	rootCmd.AddCommand(abortCmd())
-	rootCmd.AddCommand(upCmd())
-	rootCmd.AddCommand(downCmd())
-	rootCmd.AddCommand(topCmd())
-	rootCmd.AddCommand(bottomCmd())
-	rootCmd.AddCommand(skillCmd())
-	rootCmd.AddCommand(reviewsCmd())
-	rootCmd.AddCommand(deleteStackCmd())
-	rootCmd.AddCommand(splitCmd())
-	rootCmd.AddCommand(execCmd())
+// isTerminal reports whether w is a terminal, as opposed to a pipe or a file.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && isatty.IsTerminal(f.Fd())
 }
 
 // requireBranch checks that HEAD is not detached. Returns an error if HEAD is detached.

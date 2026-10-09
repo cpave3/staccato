@@ -14,9 +14,21 @@ func modifyCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "modify",
-		Short: "Amend the current branch and restack downstream",
-		Long:  "Amends the HEAD commit with staged changes (or all changes with --all) and restacks downstream branches.",
-		Args:  cobra.NoArgs,
+		Short: "Amend the current branch's last commit and restack above it",
+		Long: `Amends the last commit of the current branch with the staged changes, keeping
+its message, and then restacks every branch above it. Use it to fold a fix
+into a branch in the middle of a stack.
+
+--all stages every change in the working tree first, like 'git add -A'.
+--message replaces the commit message; given alone, it only rewords the commit.
+
+To add a separate commit instead of amending, commit with git, then run
+'st top' and 'st restack'. If the restack stops on a conflict, resolve it and
+run 'st continue'.`,
+		Example: `st modify --all
+st modify --all --message "feat: add order API"
+st modify --message "feat: add order API"`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {
@@ -113,8 +125,8 @@ func modifyCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVarP(&all, "all", "a", false, "Stage all changes before amending")
-	cmd.Flags().StringVarP(&message, "message", "m", "", "Update commit message")
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "Stage every change in the working tree before amending")
+	cmd.Flags().StringVarP(&message, "message", "m", "", "Replace the commit message with `text`")
 
 	return cmd
 }

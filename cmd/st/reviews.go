@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/forge"
 	"github.com/cpave3/staccato/pkg/reviews"
+	"github.com/spf13/cobra"
 )
 
 func reviewsCmd() *cobra.Command {
@@ -18,9 +18,22 @@ func reviewsCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "reviews",
-		Short: "Collect PR review feedback for stack branches",
-		Long: `Fetches inline comments, review submissions, and general comments from
-GitHub PRs associated with stack branches. Produces a unified markdown document.`,
+		Short: "Collect the stack's pull request feedback as Markdown",
+		Long: `Fetches the inline comments, review submissions and general comments on the
+pull requests of the stack's branches and prints them as one Markdown
+document, with a section for each pull request.
+
+By default it covers the current lineage. --current limits it to the current
+branch, --to-current to the branches from the trunk up to the current one.
+--out writes the document to a file instead of standard output.
+
+Comments from bot accounts (logins ending in [bot]) are left out, except those
+of the review bots coderabbitai[bot], cubic-dev-ai[bot] and greptile-apps[bot].
+
+Needs a GitHub remote named origin and the GitHub CLI (gh), signed in.`,
+		Example: `st reviews
+st reviews --current
+st reviews --to-current --out feedback.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, _, _, err := getContext()
 			if err != nil {
@@ -119,9 +132,9 @@ GitHub PRs associated with stack branches. Produces a unified markdown document.
 		},
 	}
 
-	cmd.Flags().BoolVar(&current, "current", false, "Only collect reviews for the current branch")
-	cmd.Flags().BoolVar(&toCurrent, "to-current", false, "Collect reviews for ancestors up to current branch")
-	cmd.Flags().StringVar(&outPath, "out", "", "Write output to file instead of stdout")
+	cmd.Flags().BoolVar(&current, "current", false, "Only the current branch's pull request")
+	cmd.Flags().BoolVar(&toCurrent, "to-current", false, "Only the branches from the trunk up to the current one")
+	cmd.Flags().StringVar(&outPath, "out", "", "Write the document to `path` instead of standard output")
 
 	return cmd
 }

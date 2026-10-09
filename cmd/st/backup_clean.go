@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
+	"github.com/spf13/cobra"
 )
 
 type backupCleanItem struct {
@@ -154,7 +154,15 @@ func (m backupCleanTUI) selectedBackups() []backup.BackupInfo {
 func backupCleanCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "clean",
-		Short: "Interactively select and delete old backups",
+		Short: "Choose backups to delete, interactively",
+		Long: `Opens a list of every backup, grouped by branch: space selects, a selects all,
+n selects none, enter deletes the selected backups after asking, q or esc
+leaves.
+
+Interactive: it needs a terminal. In a script or an agent session, list the
+backup branches with 'git branch --list "backup/*"' and delete one with
+'git branch -D <backup-branch>'.`,
+		Example: `st backup clean`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {

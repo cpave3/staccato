@@ -3,16 +3,17 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/forge"
 	"github.com/cpave3/staccato/pkg/hooks"
+	"github.com/spf13/cobra"
 )
 
 func prCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr",
-		Short: "Interact with pull requests",
-		Long:  "Commands for creating and viewing pull requests on your hosting provider.",
+		Short: "Create and view pull requests",
+		Example: `st pr make --title "feat: add order API" --description "Adds the order API."
+st pr view`,
 	}
 	cmd.AddCommand(prMakeCmd())
 	cmd.AddCommand(prViewCmd())
@@ -26,9 +27,17 @@ func prMakeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "make",
-		Short: "Create a PR for the current branch",
-		Long: `Creates a pull request targeting the parent branch in the stack.
-This ensures PRs in a stack are chained correctly.`,
+		Short: "Open a pull request from the current branch into its parent",
+		Long: `Creates a pull request whose base is the current branch's parent in the stack,
+so that the pull requests of a stack chain in the same order as its branches.
+Run it on each branch, from the bottom of the stack up. The branch is pushed
+first if origin does not have it.
+
+Uses the GitHub CLI (gh). Without --title, gh asks for the title and body
+interactively, which needs a terminal: scripts and agents should pass --title
+and --description. --web opens the form in a browser instead.`,
+		Example: `st pr make --title "feat: add order API" --description "Adds the order API."
+st pr make --web`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, _, repoPath, err := getContext()
 			if err != nil {
@@ -78,9 +87,9 @@ This ensures PRs in a stack are chained correctly.`,
 		},
 	}
 
-	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open in browser")
-	cmd.Flags().StringVarP(&title, "title", "t", "", "PR title")
-	cmd.Flags().StringVarP(&description, "description", "d", "", "PR description")
+	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open the pull request form in the browser")
+	cmd.Flags().StringVarP(&title, "title", "t", "", "Pull request title `text`")
+	cmd.Flags().StringVarP(&description, "description", "d", "", "Pull request body `text`")
 	return cmd
 }
 
@@ -89,8 +98,11 @@ func prViewCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "view",
-		Short: "View the PR for the current branch",
-		Long:  "Shows the pull request associated with the current branch.",
+		Short: "Show the pull request of the current branch",
+		Long: `Prints the current branch's pull request, as 'gh pr view' does. --web opens it
+in the browser instead. Needs the GitHub CLI (gh), signed in.`,
+		Example: `st pr view
+st pr view --web`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, gitRunner, _, repoPath, err := getContext()
 			if err != nil {
@@ -124,6 +136,6 @@ func prViewCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open in browser")
+	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open the pull request in the browser")
 	return cmd
 }

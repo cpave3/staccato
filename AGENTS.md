@@ -19,6 +19,7 @@ st/
 │   ├── backup.go, restore.go, log.go, status.go, pr.go
 │   ├── split.go           # split describe/apply (thin wrapper over pkg/split)
 │   ├── exec.go            # exec command (thin wrapper over pkg/stackexec)
+│   ├── help.go            # help pages, 'st help' agent primer, usage errors
 │   └── *_test.go          # E2E + TUI model tests by command/behavior
 ├── internal/testutil/
 │   └── git.go             # Test helpers (GitRepo, isolated repos)
@@ -84,21 +85,19 @@ st/
 - `GetUnattachedBranches()`: Branches not in graph
 
 #### pkg/split
-- Shared by the CLI (`cmd/st/split.go`) and the MCP tools (`pkg/mcp/tools_split.go`); both are thin wrappers, so behavior cannot drift between them
+- `cmd/st/split.go` is a thin wrapper over it
 - `Describe(sc, branch)`: inventory of a branch (commits, changed files, churn) as a `Description`
 - `ParsePlan(data)` / `Plan.Validate()`: strict JSON decoding (unknown keys rejected) and shape checks
 - `Apply(sc, plan, opts)`: builds every slice, then moves all branches in one `git update-ref --stdin` transaction
 - Slices are built with plumbing in a scratch index (`GIT_INDEX_FILE`, `read-tree`, `update-index --index-info`, `write-tree`, `commit-tree`); the working tree and real index are never touched
 - **Invariant**: the top slice's tree equals the original branch's tree. Everything else relies on it: because content is identical, descendants are re-parented with `commit-tree` (same tree, new parent) instead of going through the restack engine, so no checkout happens and no conflict is possible
 - `--exec` verification (`verify.go`) is the only part that checks anything out; it restores the starting checkout on failure and on SIGINT/SIGTERM
-- Not exposed over MCP: `--exec` (arbitrary shell). `st_run` refuses it too
 
 #### pkg/stackexec
 - `Run(sc, opts)`: checks out each branch of the current lineage in turn (detached, bottom to top), runs a shell command in it, and returns a `Result` with one `BranchResult` per branch. Backs `st exec` (`cmd/st/exec.go`)
 - A failing command is data in the `Result`, not an error. `Run` returns an error only when st cannot do its own part, and then returns the partial `Result` with it
 - Returns to the starting branch when it ends, including on SIGINT/SIGTERM. Tracked-file changes the command makes are stashed, so they are not carried into the next branch
 - Branches are visited parents-first with siblings in name order (`lineage`), because `Graph.GetChildren` iterates a map
-- CLI only: it runs an arbitrary shell command, so there is no MCP tool and `st_run` refuses `exec`
 - Same mechanism as `--exec` in `pkg/split/verify.go`, but separate code: a fix to process or signal handling in one probably belongs in the other too
 
 #### pkg/hooks
@@ -110,7 +109,7 @@ st/
 - `Fire(ctx)`: Discovers all executable scripts for the event, runs each with JSON on stdin and env vars (`ST_EVENT`, `ST_REPO_PATH`, `ST_BRANCH`)
 - Exit codes: 0=success, 2=block (pre-hooks) or warn (post-hooks), other=warn and continue
 - 30-second timeout per script
-- Both CLI commands and MCP tool handlers fire hooks after their operations
+- Commands fire hooks after their operations
 
 #### pkg/output
 - `Printer` struct with `verbose` flag
@@ -143,7 +142,7 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 | `restore [branch]` | Restore from automatic backup | `--all` |
 | `sync` | Push to remote | `--dry-run` |
 | `backup` | Manual snapshot of all stack branches | — |
-| `log` | Display stack tree | — |
+| `log` | Display stack tree | `--json` |
 | `switch` | Interactive branch selector (TUI) | — |
 | `split describe [branch]` | JSON inventory of a branch for planning a split | — |
 | `split apply <plan.json\|->` | Split a branch into stacked branches from a JSON plan | `--dry-run`, `--exec`, `--json` |
@@ -152,6 +151,23 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 | `graph share` | Move graph to shared git ref | — |
 | `graph local` | Move graph back to local file | — |
 | `graph which` | Show current storage mode | — |
+
+### Help
+
+Help is the interface documentation: there is no other place a user or an agent learns a command. `cmd/st/help.go` renders every page in one layout (summary, usage, description, commands, arguments, options, examples) from the cobra command, so a command only supplies the content:
+
+- `Use`: the command and its operands, e.g. `"attach [branch]"`. `[options]` is appended when the command has flags of its own
+- `Short`: one line, at most 59 characters, no full stop
+- `Long`: what it does, what it needs, what it leaves behind, and the non-interactive alternative if it opens a TUI
+- `Example`: one runnable command per line, most typical first. A group's help previews the first three of each of its commands
+- `withArgs(cmd, argDoc{...})`: one entry per operand in `Use`
+- Flag descriptions name their value in backticks: ``"Parent `branch`"`` renders as `--parent <branch>`
+
+`st help` prints the agent primer (`agentPrimer`): concepts and cross-command workflows, plus the command list generated from the tree. A workflow that spans commands belongs there, not in one command's help.
+
+Tests in `cmd/st/help_test.go` hold this together: `TestEveryCommandIsDocumented` fails for a command without a summary, description, examples or argument docs, and `TestExamplesUseRealCommandsAndFlags` fails for an example, in a command or the primer, that names a command or flag that does not exist.
+
+Errors: `main` prints a returned error once. `usageError` adds the usage line and a pointer to `--help` when the command was invoked wrongly (bad arguments or flags); a command that failed while doing its job prints only its reason.
 
 ### Command data flow
 ```

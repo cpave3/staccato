@@ -7,12 +7,16 @@ import (
 )
 
 func detachCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "detach [branch-name]",
-		Short: "Remove a branch from the stack graph",
-		Long: `Removes a branch from the stack graph while keeping the git branch intact.
-If no branch name is provided, uses the current branch.
-Children of the detached branch are reparented to the detached branch's parent.`,
+	return withArgs(&cobra.Command{
+		Use:   "detach [branch]",
+		Short: "Stop tracking a branch, keeping the git branch",
+		Long: `Removes the branch from the stack; without [branch], the current branch. The
+git branch and its commits are left alone. Its children are given its parent
+as their new parent: run 'st restack' afterwards to rebase them onto it.
+
+To delete the git branch as well, use 'st delete'.`,
+		Example: `st detach
+st detach feature/old`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, git, printer, repoPath, err := getContext()
@@ -70,5 +74,5 @@ Children of the detached branch are reparented to the detached branch's parent.`
 
 			return nil
 		},
-	}
+	}, argDoc{"branch", "Branch to stop tracking (default: the current branch)"})
 }

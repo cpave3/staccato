@@ -3,16 +3,23 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/restack"
+	"github.com/spf13/cobra"
 )
 
 func continueCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "continue",
-		Short: "Resume restack after conflict resolution",
-		Long:  "Continues a restack operation that was paused due to conflicts.",
+		Short: "Resume a restack that stopped on a conflict",
+		Long: `Finishes the rebase that stopped and restacks the rest of the stack. Before
+running it, resolve the conflicted files and stage them with 'git add'. It
+works after any st command that restacks: restack, insert, modify, move,
+'attach --parent' and sync.
+
+It can stop again on a conflict in a later branch: resolve and continue until
+it finishes. 'st abort' gives up instead.`,
+		Example: `st continue`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, git, printer, repoPath, err := getContext()
 			if err != nil {

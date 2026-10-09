@@ -10,9 +10,12 @@ import (
 func bottomCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "bottom",
-		Short: "Navigate to the bottom of the stack",
-		Long:  "Navigates to the first tracked branch above root in the current lineage.",
-		Args:  cobra.NoArgs,
+		Short: "Check out the first branch above the trunk",
+		Long: `Moves down the current stack to the branch whose parent is the trunk. From the
+trunk it checks out the bottom branch of the stack, when there is only one
+stack.`,
+		Example: `st bottom`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, _, err := getContext()
 			if err != nil {

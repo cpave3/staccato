@@ -3,16 +3,21 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/hooks"
+	"github.com/spf13/cobra"
 )
 
 func newCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "new <branch-name>",
-		Short: "Create a new branch from the current root/trunk",
-		Long:  "Creates a new branch from the current root branch and adds it to the stack graph.",
-		Args:  cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Use:   "new <branch>",
+		Short: "Start a new stack: create a branch on the trunk",
+		Long: `Creates <branch> from the trunk and checks it out, whichever branch you are
+on. The trunk is the stack's root branch, normally main or master.
+
+To stack on top of the current branch instead, use 'st append'. A branch name
+that already exists is refused: add that branch to the stack with 'st attach'.`,
+		Example: `st new feature/api`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			branchName := args[0]
 
@@ -62,4 +67,5 @@ func newCmd() *cobra.Command {
 			return nil
 		},
 	}
+	return withArgs(cmd, argDoc{"branch", "Name of the branch to create"})
 }

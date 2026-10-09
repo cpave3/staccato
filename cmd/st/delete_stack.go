@@ -15,10 +15,15 @@ func deleteStackCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "delete-stack",
-		Short: "Remove the current lineage from the stack graph",
-		Long: `Removes all non-root branches in the current lineage from the stack graph.
-By default, git branches are left intact (graph-only removal).
-Use --branches to also delete the git branches.`,
+		Short: "Take the whole current stack out of st",
+		Long: `Removes every branch of the current lineage from the stack and checks out the
+trunk. The git branches are kept unless --branches is given.
+
+With --branches, a stack that has branches which were never pushed is refused
+unless --force is given too. Cannot be run from the trunk.`,
+		Example: `st delete-stack
+st delete-stack --branches
+st delete-stack --branches --force`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, repoPath, err := getContext()
@@ -118,8 +123,8 @@ Use --branches to also delete the git branches.`,
 		},
 	}
 
-	cmd.Flags().BoolVar(&branches, "branches", false, "Also delete the git branches")
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force delete even if branches have unpushed commits")
+	cmd.Flags().BoolVar(&branches, "branches", false, "Delete the git branches as well")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "With --branches, delete branches that were never pushed too")
 
 	return cmd
 }

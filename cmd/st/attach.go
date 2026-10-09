@@ -7,7 +7,6 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/attach"
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/git"
@@ -15,6 +14,7 @@ import (
 	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/output"
 	"github.com/cpave3/staccato/pkg/restack"
+	"github.com/spf13/cobra"
 )
 
 // attachCandidate represents a potential parent branch for attach TUI
@@ -377,12 +377,25 @@ func attachCmd() *cobra.Command {
 	var parentFlag string
 
 	cmd := &cobra.Command{
-		Use:   "attach [branch-name]",
-		Short: "Adopt an unknown branch into the stack",
-		Long: `Attaches a branch that was created outside of st to the stack graph.
-If no branch is specified, uses the current branch.
-Opens an interactive TUI to select the parent branch (use --auto to skip TUI).
-Use --parent to specify the parent directly. Works for both new and already-tracked branches.`,
+		Use:   "attach [branch]",
+		Short: "Add an existing branch to the stack, or re-parent one",
+		Long: `Records an existing git branch in the stack under a parent, so that st
+restacks and pushes it with the rest. Without [branch], the current branch.
+
+With --parent, the branch goes under that parent, which has to be the trunk or
+a branch in the stack. If the branch is already in the stack this moves it: it
+is rebased onto the new parent and the branches above it are restacked.
+
+With --auto, st picks the most likely parent from the branch's history.
+
+With neither, an interactive picker opens, which needs a terminal. Scripts and
+agents should pass --parent.
+
+A --parent named main, master, develop or trunk is accepted even when it is
+not in the stack yet, and becomes the trunk.`,
+		Example: `st attach feature/old --parent main
+st attach --parent feature/api
+st attach feature/old --auto`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, repoPath, err := getContext()
@@ -428,10 +441,10 @@ Use --parent to specify the parent directly. Works for both new and already-trac
 		},
 	}
 
-	cmd.Flags().BoolVar(&autoSelect, "auto", false, "Automatically select the best parent candidate (skip TUI)")
-	cmd.Flags().StringVar(&parentFlag, "parent", "", "Specify parent branch directly (skip TUI)")
+	cmd.Flags().BoolVar(&autoSelect, "auto", false, "Pick the most likely parent from the branch's history")
+	cmd.Flags().StringVar(&parentFlag, "parent", "", "Parent `branch`: the trunk or a branch in the stack")
 
-	return cmd
+	return withArgs(cmd, argDoc{"branch", "Branch to add or move (default: the current branch)"})
 }
 
 func attachWithParent(g *graph.Graph, gitRunner *git.Runner, repoPath string, attacher *attach.Attacher, branchToAttach, parent string, printer *output.Printer) error {

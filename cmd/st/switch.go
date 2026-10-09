@@ -7,18 +7,18 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/attach"
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
+	"github.com/spf13/cobra"
 )
 
 // branchItem represents a branch in the interactive list
 type branchItem struct {
-	name       string
-	parent     string
-	depth      int
-	current    bool
+	name    string
+	parent  string
+	depth   int
+	current bool
 }
 
 func (i branchItem) FilterValue() string { return i.name }
@@ -250,9 +250,14 @@ func (s switchTUI) renderList() string {
 func switchCmdFunc() *cobra.Command {
 	return &cobra.Command{
 		Use:   "switch",
-		Short: "Interactively switch to a branch in the stack",
-		Long: `Displays an interactive tree view of the stack with vim-like navigation.
-Use arrow keys to navigate, / to search, n/N to jump between matches, enter to select.`,
+		Short: "Pick a branch of the stack to check out, interactively",
+		Long: `Opens the stack as a tree in the terminal. Move with the arrow keys or j and
+k, press enter to check out the selected branch, and q or esc to leave. Press
+/ to search: type part of a branch name, then enter to jump to the first match.
+
+Interactive: it needs a terminal. In a script or an agent session, read the
+branches from 'st log' and use 'git checkout <branch>', 'st up' or 'st down'.`,
+		Example: `st switch`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, _, _, err := getContext()
 			if err != nil {

@@ -25,7 +25,38 @@ You decide where the boundaries go; st builds the slices and moves the branches.
   3. st split apply plan.json --dry-run   check the plan; nothing moves
   4. st split apply plan.json             apply it
 
-Run 'st split apply --help' for the plan format.`,
+The branch has to be in the stack ('st attach') and up to date with its parent
+('st restack'). Do not reset, stage or cherry-pick by hand: describe the split
+in the plan and let st carry it out.
+
+Choosing the boundaries:
+
+  Aim for three to five slices that each tell one story, ordered so that each
+  builds on the ones below it: setup and migrations, then shared types and
+  utilities, then core logic, then the API, then the UI. Keep tests with the
+  code they cover. Every slice has to build and pass its tests on its own.
+
+  Some changes have to stay together, or a slice will not compile:
+  - a changed function signature goes with every call site
+  - a new type, constant or interface goes with its first use, or earlier
+  - an import goes with the code that needs it
+  - a deleted function goes with the removal of its last caller, or later
+  When that forces two slices together, merge them.
+
+  A file whose changes belong to two slices, such as a README or a routing
+  file: give the whole file to the earliest slice that needs it, if that
+  version does not refer to later code. Otherwise use "overrides", described in
+  'st split apply --help'.
+
+After the split, 'st sync' pushes the branches, and 'st pr make' on each new
+branch, from the bottom up, opens its pull request. A pull request that the
+original branch already had now belongs to the top slice: change its base to
+the slice below, or it still shows the whole change.
+
+Run 'st split describe --help' and 'st split apply --help' for the formats.`,
+		Example: `st split describe
+st split apply plan.json --dry-run
+st split apply plan.json --exec "go build ./..."`,
 	}
 	cmd.AddCommand(splitDescribeCmd())
 	cmd.AddCommand(splitApplyCmd())
@@ -33,7 +64,7 @@ Run 'st split apply --help' for the plan format.`,
 }
 
 func splitDescribeCmd() *cobra.Command {
-	return &cobra.Command{
+	return withArgs(&cobra.Command{
 		Use:   "describe [branch]",
 		Short: "Print a branch's commits and changed files as JSON",
 		Long: `Prints the inventory needed to plan a split, as JSON:
@@ -60,6 +91,8 @@ which means the commits rework each other.
 restacked before it can be split.
 
 Describes the current branch unless a branch name is given.`,
+		Example: `st split describe
+st split describe feature-big`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		// main prints the returned error; cobra would print it a second time.
@@ -79,14 +112,14 @@ Describes the current branch unless a branch name is given.`,
 			}
 			return writeJSON(cmd.OutOrStdout(), description)
 		},
-	}
+	}, argDoc{"branch", "Branch to describe (default: the current branch)"})
 }
 
 func splitApplyCmd() *cobra.Command {
 	var dryRun, asJSON bool
 	var execCmd string
 	cmd := &cobra.Command{
-		Use:   "apply <plan.json | ->",
+		Use:   "apply <plan>",
 		Short: "Split a branch according to a JSON plan",
 		Long: `Builds every slice of the plan, then moves the branches in one step.
 A plan that cannot be carried out changes nothing.
@@ -161,6 +194,10 @@ With --exec, each slice is checked out in turn and the command is run in it
 (for example a build), like 'git rebase --exec'. The split is applied only if
 the command succeeds in every slice. This needs a working tree without
 uncommitted changes. ST_SPLIT_SLICE holds the slice's name.`,
+		Example: `st split apply plan.json --dry-run
+st split apply plan.json
+st split apply plan.json --exec "go build ./..."
+st split apply plan.json --json`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		// main prints the returned error; cobra would print it a second time.
@@ -200,9 +237,9 @@ uncommitted changes. ST_SPLIT_SLICE holds the slice's name.`,
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Build and report the slices without moving any branch")
-	cmd.Flags().StringVar(&execCmd, "exec", "", "Shell command to run in each slice first; if it fails anywhere, nothing is applied")
+	cmd.Flags().StringVar(&execCmd, "exec", "", "Shell `command` to run in each slice first; if it fails anywhere, nothing is applied")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the result as JSON")
-	return cmd
+	return withArgs(cmd, argDoc{"plan", "Path of the JSON plan, or - to read it from standard input"})
 }
 
 // readPlan returns the plan's bytes and the directory its relative override

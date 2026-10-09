@@ -9,9 +9,11 @@ import (
 func downCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "down",
-		Short: "Navigate to the parent branch",
-		Long:  "Checks out the parent branch of the current branch in the stack.",
-		Args:  cobra.NoArgs,
+		Short: "Check out the parent of the current branch",
+		Long: `Moves one branch down the stack, towards the trunk. From the bottom branch of
+a stack this checks out the trunk.`,
+		Example: `st down`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, _, err := getContext()
 			if err != nil {

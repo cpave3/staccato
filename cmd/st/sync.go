@@ -15,9 +15,26 @@ func syncCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Fetch, detect merged branches, restack & push",
-		Long: `Fetches from remote, detects branches merged on GitHub, removes them from
-the stack graph (reparenting children), restacks remaining branches, and pushes.`,
+		Short: "Fetch, drop merged branches, restack and push the stack",
+		Long: `Brings the stack up to date with the remote and publishes it:
+
+  1. fetches from origin, pruning remote branches that were deleted
+  2. fast-forwards the trunk to origin's
+  3. finds the branches whose pull request was merged, squash merges included,
+     removes them from the stack and deletes them, and gives their children
+     the merged branch's parent
+  4. restacks the current lineage onto the updated trunk
+  5. pushes the branches of the current lineage, with --force-with-lease
+
+--down stops after step 4, so nothing is pushed. --dry-run fetches and then
+prints what steps 2, 3 and 5 would do, without doing them.
+
+If the restack stops on a conflict, resolve it, run 'st continue', then run
+'st sync' again to push. A merged branch that is checked out in another
+worktree is taken out of the stack but deleted only by a later sync.`,
+		Example: `st sync
+st sync --dry-run
+st sync --down`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, repoPath, err := getContext()
 			if err != nil {
@@ -133,8 +150,8 @@ the stack graph (reparenting children), restacks remaining branches, and pushes.
 		},
 	}
 
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be pushed without pushing")
-	cmd.Flags().BoolVar(&downOnly, "down", false, "Only pull changes from remote, skip pushing")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Fetch, then print what sync would do without doing it")
+	cmd.Flags().BoolVar(&downOnly, "down", false, "Fetch and restack only; push nothing")
 
 	return cmd
 }

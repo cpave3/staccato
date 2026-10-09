@@ -10,8 +10,13 @@ func statCmd() *cobra.Command {
 	var includeUncommitted bool
 	cmd := &cobra.Command{
 		Use:   "stat",
-		Short: "Show changes on the current branch",
-		Args:  cobra.NoArgs,
+		Short: "Show how much the current branch changes",
+		Long: `Prints the files changed, insertions and deletions of the current branch
+against its parent in the stack, as 'git diff --shortstat' reports them. Only
+committed changes count, unless --include-uncommitted is given.`,
+		Example: `st stat
+st stat --include-uncommitted`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, _, _, err := getContext()
 			if err != nil {
@@ -46,6 +51,6 @@ func statCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&includeUncommitted, "include-uncommitted", "i", false, "Include staged and unstaged changes")
+	cmd.Flags().BoolVarP(&includeUncommitted, "include-uncommitted", "i", false, "Count staged and unstaged changes too")
 	return cmd
 }

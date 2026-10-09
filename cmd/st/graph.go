@@ -13,8 +13,12 @@ import (
 func graphCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "graph",
-		Short: "Manage the stack graph storage mode",
-		Long:  "Commands for sharing or localizing the stack graph.",
+		Short: "Store, share and repair the stack graph",
+		Long: `The graph is st's record of which branch is stacked on which, with the commit
+each branch was last based on. It is kept in a file inside .git unless shared.`,
+		Example: `st graph which
+st graph share
+st graph repair --dry-run`,
 	}
 	cmd.AddCommand(graphShareCmd())
 	cmd.AddCommand(graphLocalCmd())
@@ -26,8 +30,12 @@ func graphCmd() *cobra.Command {
 func graphShareCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "share",
-		Short: "Share the graph via a git ref (pushable/fetchable)",
-		Long:  "Moves the local graph into a git ref so it can be pushed and fetched by teammates.",
+		Short: "Keep the graph in a git ref that can be pushed and fetched",
+		Long: `Moves the graph from the local file (.git/stack/graph.json) into a git ref of
+your own under refs/staccato/, derived from your git user.email, and sets
+origin up to fetch refs/staccato/*. 'st sync' then pushes the graph with the
+branches, so that another clone can fetch it.`,
+		Example: `st graph share`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, gitRunner, _, _, err := getContext()
 			if err != nil {
@@ -86,8 +94,10 @@ func graphShareCmd() *cobra.Command {
 func graphLocalCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "local",
-		Short: "Move the graph back to local-only storage",
-		Long:  "Moves the shared graph ref back to the local file, removing the git ref.",
+		Short: "Move the graph back to the local file",
+		Long: `Copies the shared graph back to .git/stack/graph.json, deletes the git ref,
+and stops fetching refs/staccato/*.`,
+		Example: `st graph local`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sc, err := loadStaccatoContext()
 			if err != nil {
@@ -138,8 +148,10 @@ func graphLocalCmd() *cobra.Command {
 
 func graphWhichCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "which",
-		Short: "Show current graph storage mode",
+		Use:     "which",
+		Short:   "Show where the graph is stored",
+		Long:    `Prints 'Local' with the file's path, or 'Shared' with the git ref.`,
+		Example: `st graph which`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sc, err := loadStaccatoContext()
 			if err != nil {

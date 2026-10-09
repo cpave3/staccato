@@ -3,18 +3,25 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/hooks"
+	"github.com/spf13/cobra"
 )
 
 func deleteCmd() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "delete <branch-name>",
-		Short: "Delete a branch from the stack",
-		Long:  "Removes a branch from the stack graph, reparents its children to its parent, and deletes the git branch.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "delete <branch>",
+		Short: "Delete a branch and take it out of the stack",
+		Long: `Removes the branch from the stack, gives its children its parent as their new
+parent, and deletes the git branch. If it is the current branch, its parent is
+checked out first. Run 'st restack' afterwards to rebase the children.
+
+When the repository has a remote, a branch that was never pushed is refused
+unless --force is given. To keep the git branch, use 'st detach'.`,
+		Example: `st delete feature/old
+st delete feature/old --force`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			branchName := args[0]
 
@@ -81,7 +88,7 @@ func deleteCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force delete even if branch has unpushed commits")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Delete the branch even if it was never pushed")
 
-	return cmd
+	return withArgs(cmd, argDoc{"branch", "Branch to delete"})
 }

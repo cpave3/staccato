@@ -3,19 +3,31 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/cpave3/staccato/pkg/backup"
 	"github.com/cpave3/staccato/pkg/hooks"
 	"github.com/cpave3/staccato/pkg/restack"
+	"github.com/spf13/cobra"
 )
 
 func restackCmd() *cobra.Command {
 	var toCurrent bool
 	cmd := &cobra.Command{
 		Use:   "restack",
-		Short: "Restack the entire stack",
-		Long: `Rebases all branches in the stack onto their parents in topological order.
-Creates backups before any destructive operations. Stops on first conflict.`,
+		Short: "Rebase the branches of the current stack onto their parents",
+		Long: `Rebases each branch, from the trunk upwards, onto its parent, so that every
+branch contains its parent's latest commits. Run it after a branch lower in
+the stack has changed.
+
+Run it from the tip of the stack ('st top'). From a branch that has children
+it refuses unless --to-current is given, which restacks the branches from the
+trunk up to the current one and leaves the branches above untouched.
+
+The branches are backed up first, and the backups are removed when the restack
+succeeds. On a conflict it stops: resolve the files, 'git add' them, and run
+'st continue', or run 'st abort' to put every branch back. Commit or stash
+uncommitted changes before restacking.`,
+		Example: `st restack
+st restack --to-current`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, git, printer, repoPath, err := getContext()
 			if err != nil {
@@ -118,6 +130,6 @@ Creates backups before any destructive operations. Stops on first conflict.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&toCurrent, "to-current", false, "Restack only up to the current branch")
+	cmd.Flags().BoolVar(&toCurrent, "to-current", false, "Restack from the trunk up to the current branch only")
 	return cmd
 }

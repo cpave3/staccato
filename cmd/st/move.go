@@ -12,10 +12,16 @@ func moveCmd() *cobra.Command {
 	var onto string
 
 	cmd := &cobra.Command{
-		Use:   "move",
-		Short: "Move the current branch onto a new parent",
-		Long:  "Reparents the current branch onto a different parent and restacks downstream branches.",
-		Args:  cobra.NoArgs,
+		Use:   "move --onto <branch>",
+		Short: "Move the current branch and its children onto a new parent",
+		Long: `Makes --onto the parent of the current branch, then rebases the current branch
+and every branch above it. The new parent has to be the trunk or a branch in
+the stack, and cannot be one of the branches above the current one.
+
+If the restack stops on a conflict, resolve it and run 'st continue'.`,
+		Example: `st move --onto main
+st move --onto feature/api`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if onto == "" {
 				return fmt.Errorf("--onto is required")
@@ -96,7 +102,7 @@ func moveCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&onto, "onto", "", "Target parent branch")
+	cmd.Flags().StringVar(&onto, "onto", "", "New parent `branch`: the trunk or a branch in the stack")
 
 	return cmd
 }

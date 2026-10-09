@@ -10,9 +10,12 @@ import (
 func topCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "top",
-		Short: "Navigate to the tip of the stack",
-		Long:  "Follows single-child links from the current branch to the tip of the stack.",
-		Args:  cobra.NoArgs,
+		Short: "Check out the tip of the current stack",
+		Long: `Follows the stack upwards from the current branch to the branch that has no
+children. Where a branch on the way has several children it lists them and
+stops.`,
+		Example: `st top`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, printer, _, err := getContext()
 			if err != nil {

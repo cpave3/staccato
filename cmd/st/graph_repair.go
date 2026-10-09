@@ -14,7 +14,18 @@ func graphRepairCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "repair",
-		Short: "Reconcile stack metadata with local branch history",
+		Short: "Correct the base and head recorded for the stack's branches",
+		Long: `For every branch of the current stack, compares the base and head commits the
+graph records with the branches as they are in git, prints each correction as
+'<branch>: base <sha>, head <sha>', and writes them to the graph. Use it after
+restoring or moving branches with git directly. Nothing is printed when the
+graph is already right. --dry-run prints the corrections without writing them.
+
+Check out a branch of the stack first, and finish or abort any rebase. Other
+stacks are not looked at. When a branch and its parent have diverged and the
+original fork point cannot be told, it refuses instead of guessing.`,
+		Example: `st graph repair --dry-run
+st graph repair`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, gitRunner, _, repoPath, err := getContext()
 			if err != nil {
@@ -71,7 +82,7 @@ func graphRepairCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show proposed corrections without writing the graph")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the corrections without writing them")
 	return cmd
 }
 
