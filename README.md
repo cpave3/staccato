@@ -75,6 +75,7 @@ st sync --down
 | `st graph repair`     | Reconcile current stack with local branch history  | `--dry-run`                   |
 | `st split describe [branch]` | Print a branch's commits and changed files as JSON | |
 | `st split apply <plan>` | Split a branch into stacked branches from a JSON plan | `--dry-run`, `--exec <cmd>`, `--json` |
+| `st exec <command>`   | Run a command on every branch of the current stack and report which pass | `--fail-fast`, `--json` |
 | `st mcp`              | Start the MCP server (stdio transport)             |                               |
 
 ### `st attach`
@@ -151,6 +152,34 @@ What `apply` guarantees:
 `--dry-run` builds the slices and reports their sizes and commit ids without moving anything. `--exec <cmd>` checks out each slice in turn and runs the command, like `git rebase --exec`, and applies the split only if it succeeds in every slice.
 
 Name the top slice after the original branch so its pull request and child branches stay attached; to delete the original name instead, set `"drop_original": true`. When a split rewrites commits, the originals are kept on a `backup/manual/...` branch.
+
+### `st exec`
+
+Runs a command on every branch of the current lineage, from the bottom of the stack to the top, and reports which branches pass. Use it to find out which branches of a stack build or pass their tests.
+
+```bash
+st exec "task build"                      # run on every branch, then report
+st exec --fail-fast go test ./...         # stop at the first branch that fails
+st exec --json "task build" 2>/dev/null   # only the report, as JSON
+```
+
+```
+Ran on 3 branch(es): task build
+  ✔ feature-core  passed  1.2s
+  ✘ feature-api   failed  0.8s  exit 1
+  ✔ feature-ui    passed  1.4s
+2 passed, 1 failed
+```
+
+Each branch's tip is checked out in turn as a detached HEAD, like `git rebase --exec`, and your branch is checked out again when the run ends, also after a failure or Ctrl-C. This needs a working tree without uncommitted changes. No branch is moved: the command is for checking branches, not changing them.
+
+- The command's own output goes to standard error and the report to standard output. The exit status is 1 if the command failed on any branch.
+- By default the command runs on every branch even after a failure. `--fail-fast` stops at the first one and reports the rest as skipped.
+- A single argument is a shell command (`sh -c`); several arguments are the words of one command, so `st exec go test -v ./...` needs no quoting. Flags of `st exec` go before the command.
+- The command sees `ST_EXEC_BRANCH`, `ST_EXEC_PARENT`, `ST_EXEC_SHA`, `ST_EXEC_INDEX` and `ST_EXEC_TOTAL`.
+- Untracked and ignored files (build output, dependency directories) stay in place between branches. Tracked files the command modifies are saved with `git stash`.
+
+`st exec --help` has the full reference, including the JSON format.
 
 ### `st reviews`
 

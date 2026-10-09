@@ -18,6 +18,7 @@ st/
 │   ├── new.go, append.go, insert.go, restack.go, continue.go
 │   ├── backup.go, restore.go, log.go, status.go, pr.go
 │   ├── split.go           # split describe/apply (thin wrapper over pkg/split)
+│   ├── exec.go            # exec command (thin wrapper over pkg/stackexec)
 │   └── *_test.go          # E2E + TUI model tests by command/behavior
 ├── internal/testutil/
 │   └── git.go             # Test helpers (GitRepo, isolated repos)
@@ -28,6 +29,7 @@ st/
 │   ├── restack/           # Topological sort & restack engine
 │   ├── attach/            # Lazy attachment logic
 │   ├── split/             # Split one branch into stacked branches from a plan
+│   ├── stackexec/         # Run a command on every branch of a lineage
 │   ├── forge/             # Forge detection (GitHub, etc.)
 │   ├── hooks/             # Hook discovery & execution engine
 │   └── output/            # CLI formatting utilities
@@ -91,6 +93,14 @@ st/
 - `--exec` verification (`verify.go`) is the only part that checks anything out; it restores the starting checkout on failure and on SIGINT/SIGTERM
 - Not exposed over MCP: `--exec` (arbitrary shell). `st_run` refuses it too
 
+#### pkg/stackexec
+- `Run(sc, opts)`: checks out each branch of the current lineage in turn (detached, bottom to top), runs a shell command in it, and returns a `Result` with one `BranchResult` per branch. Backs `st exec` (`cmd/st/exec.go`)
+- A failing command is data in the `Result`, not an error. `Run` returns an error only when st cannot do its own part, and then returns the partial `Result` with it
+- Returns to the starting branch when it ends, including on SIGINT/SIGTERM. Tracked-file changes the command makes are stashed, so they are not carried into the next branch
+- Branches are visited parents-first with siblings in name order (`lineage`), because `Graph.GetChildren` iterates a map
+- CLI only: it runs an arbitrary shell command, so there is no MCP tool and `st_run` refuses `exec`
+- Same mechanism as `--exec` in `pkg/split/verify.go`, but separate code: a fix to process or signal handling in one probably belongs in the other too
+
 #### pkg/hooks
 - `Event` type with constants: `PostPRCreate`, `PostPRView`, `PostBranchCreate`, `PostBranchDelete`, `PostRestack`, `PostRestackConflict`, `PostSync`, `PostAttach`, `PreSync`, `PreRestack`
 - `Context` struct: `Event`, `RepoPath`, `Branch`, `Data map[string]any` — marshalled as JSON to hook stdin
@@ -137,6 +147,7 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 | `switch` | Interactive branch selector (TUI) | — |
 | `split describe [branch]` | JSON inventory of a branch for planning a split | — |
 | `split apply <plan.json\|->` | Split a branch into stacked branches from a JSON plan | `--dry-run`, `--exec`, `--json` |
+| `exec <command>` | Run a command on every branch of the current lineage, report pass/fail per branch | `--fail-fast`, `--json` |
 
 | `graph share` | Move graph to shared git ref | — |
 | `graph local` | Move graph back to local file | — |

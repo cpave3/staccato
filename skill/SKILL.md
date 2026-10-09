@@ -66,6 +66,7 @@ st reviews [--current] [--to-current] [--out path]
 st graph share / local / which
 st split describe [branch]
 st split apply <plan.json | -> [--dry-run] [--exec "cmd"] [--json]
+st exec [--fail-fast] [--json] "<command>"
 ```
 
 ## Workflows
@@ -155,6 +156,21 @@ Things to know:
 - `--exec` is CLI only; it is not available through `st_split_apply` or `st_run`.
 
 The `split-monolithic-pr` MCP prompt has the full guide, including how to choose boundaries.
+
+### Check which branches of a stack build
+
+`st exec` runs a command on every branch of the current lineage, bottom to top, and reports which pass. Run it from a shell: it is not available through `st_run`.
+
+```
+st exec "<build command>"                     # run on every branch, then report
+st exec --fail-fast "<build command>"         # stop at the first branch that fails
+st exec --json "<build command>" 2>/dev/null  # only the report, as JSON
+```
+
+- The report is on standard output, one line per branch (`passed`, `failed`, `skipped`); the command's own output is on standard error. Exit status 1 means the command failed on at least one branch.
+- It needs a working tree without uncommitted changes. Each branch is checked out in turn as a detached HEAD, and the starting branch is checked out again at the end.
+- It checks branches and does not change them: a commit the command makes is not added to the branch. Fix a failing branch with `st_git_checkout`, a commit, then `st restack`.
+- The command sees `ST_EXEC_BRANCH`, `ST_EXEC_PARENT`, `ST_EXEC_SHA`, `ST_EXEC_INDEX`, `ST_EXEC_TOTAL`. `st exec --help` has the full reference.
 
 ### Adopt existing branches into a stack
 ```

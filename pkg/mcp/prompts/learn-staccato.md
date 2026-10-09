@@ -45,6 +45,7 @@ Each branch in the stack builds on its parent. When a parent changes (e.g., afte
 | `st abort` | Cancel an in-progress rebase and clear state |
 | `st modify` | Amend current commit and auto-restack downstream |
 | `st move --onto <target>` | Reparent current branch onto a different parent |
+| `st exec "<command>"` | Run a command on every branch of the lineage and report which pass (`--fail-fast`, `--json`) |
 
 ### Branch Management
 | Command | Description |
@@ -131,6 +132,15 @@ A plan lists the slices from the bottom of the stack to the top:
 
 Use the `split-monolithic-pr` prompt for the full guide, including how to choose the boundaries.
 
+### Check which branches of a stack build
+```bash
+st exec "<build command>"                     # run on every branch, bottom to top, then report
+st exec --fail-fast "<build command>"         # stop at the first branch that fails
+st exec --json "<build command>" 2>/dev/null  # only the report, as JSON
+```
+
+The report lists each branch as `passed`, `failed` or `skipped`, and the exit status is 1 if the command failed anywhere. Each branch is checked out in turn as a detached HEAD and the starting branch is checked out again afterwards, so the working tree must have no uncommitted changes. It checks branches and does not change them. Run `st exec --help` for the details.
+
 ### Handle conflicts during restack
 ```bash
 st restack                 # May hit conflicts
@@ -161,7 +171,7 @@ To split a branch, use the dedicated tools:
 For all other operations, use `st_run` with any command string:
 - `st_run("up")`, `st_run("modify --all")`, `st_run("delete feature-x")`
 
-`--exec` is not available over MCP, through either `st_split_apply` or `st_run`. Run `st split apply --exec` from a shell.
+`--exec` is not available over MCP, through either `st_split_apply` or `st_run`, and neither is `st exec`: both run an arbitrary shell command. Run `st split apply --exec` and `st exec` from a shell.
 
 ## Key Principles
 

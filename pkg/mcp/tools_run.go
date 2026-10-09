@@ -20,7 +20,8 @@ func registerRunTool(s *server.MCPServer, sc *stcontext.StaccatoContext) {
 					"that can execute any subcommand. For structured JSON output, prefer "+
 					"st_log, st_status, or st_current. Examples: \"up\", \"down\", \"restack --to-current\", "+
 					"\"delete feature-x\", \"modify --all\". "+
-					"Note: 'st mcp' cannot be run recursively.",
+					"Note: 'st mcp' cannot be run recursively, and 'st exec' and --exec are refused "+
+					"because they run arbitrary shell commands.",
 			),
 			mcp.WithToolAnnotation(mutating()),
 			mcp.WithString("command", mcp.Required(), mcp.Description("The st subcommand and arguments (e.g. \"up\", \"restack --to-current\")")),
@@ -45,8 +46,11 @@ func runHandler(sc *stcontext.StaccatoContext) server.ToolHandlerFunc {
 		if len(parts) > 0 && parts[0] == "mcp" {
 			return mcp.NewToolResultError("cannot run 'st mcp' recursively"), nil
 		}
-		// --exec runs an arbitrary shell command. Approving this tool means
-		// approving st commands, not that.
+		// 'st exec' and --exec run an arbitrary shell command. Approving this
+		// tool means approving st commands, not that.
+		if subcommand(parts) == "exec" {
+			return mcp.NewToolResultError("'st exec' is not available through st_run: it runs an arbitrary shell command, so run it from a shell instead"), nil
+		}
 		for _, part := range parts {
 			if part == "--exec" || strings.HasPrefix(part, "--exec=") {
 				return mcp.NewToolResultError("--exec is not available through st_run: run 'st split apply --exec' from a shell instead"), nil
@@ -73,4 +77,15 @@ func runHandler(sc *stcontext.StaccatoContext) server.ToolHandlerFunc {
 		}
 		return mcp.NewToolResultText(result), nil
 	}
+}
+
+// subcommand returns the st subcommand a command line names: its first word
+// that is not a flag. The flags st takes before a subcommand have no values.
+func subcommand(parts []string) string {
+	for _, part := range parts {
+		if !strings.HasPrefix(part, "-") {
+			return part
+		}
+	}
+	return ""
 }

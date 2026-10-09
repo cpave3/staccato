@@ -103,6 +103,7 @@ func init() {
 	rootCmd.AddCommand(reviewsCmd())
 	rootCmd.AddCommand(deleteStackCmd())
 	rootCmd.AddCommand(splitCmd())
+	rootCmd.AddCommand(execCmd())
 }
 
 // requireBranch checks that HEAD is not detached. Returns an error if HEAD is detached.
