@@ -721,3 +721,129 @@ func TestGitRunner_GetMergeBase(t *testing.T) {
 		t.Errorf("expected merge base %s, got: %s", baseSHA, mergeBase)
 	}
 }
+
+// commitFile writes content to name and commits it, returning the new commit.
+func commitFile(t *testing.T, dir, name, content, message string) string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", message}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func initCommitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test User"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return dir
+}
+
+func TestGitRunner_Output(t *testing.T) {
+	dir := initCommitRepo(t)
+	commitFile(t, dir, " lead.txt", "x\n", "odd name")
+	git := NewRunner(dir)
+
+	t.Run("keeps_output_untrimmed", func(t *testing.T) {
+		out, err := git.Output(nil, "", "ls-files", "-z")
+		if err != nil {
+			t.Fatalf("Output: %v", err)
+		}
+		if out != " lead.txt\x00" {
+			t.Errorf("Output = %q, want the leading space and NUL terminator kept", out)
+		}
+	})
+
+	t.Run("passes_environment_and_stdin", func(t *testing.T) {
+		index := filepath.Join(t.TempDir(), "index")
+		env := []string{"GIT_INDEX_FILE=" + index}
+		blob, err := git.RunWith(nil, "content\n", "hash-object", "-w", "--stdin")
+		if err != nil {
+			t.Fatalf("hash-object: %v", err)
+		}
+		if _, err := git.Output(env, "100644 "+blob+"\tnew.txt\x00", "update-index", "-z", "--index-info"); err != nil {
+			t.Fatalf("update-index: %v", err)
+		}
+		scratch, _ := git.Output(env, "", "ls-files")
+		real, _ := git.Output(nil, "", "ls-files")
+		if scratch != "new.txt\n" || real != " lead.txt\n" {
+			t.Errorf("scratch index = %q, real index = %q", scratch, real)
+		}
+	})
+
+	t.Run("reports_stderr_only_in_the_error", func(t *testing.T) {
+		_, err := git.Output(nil, "", "rev-parse", "--verify", "no-such-ref")
+		if err == nil || !strings.Contains(err.Error(), "no-such-ref") {
+			t.Errorf("err = %v, want it to carry git's message", err)
+		}
+	})
+}
+
+func TestGitRunner_CherryPickTree(t *testing.T) {
+	dir := initCommitRepo(t)
+	base := commitFile(t, dir, "a.txt", "one\n", "base")
+	second := commitFile(t, dir, "a.txt", "one\ntwo\n", "extend a")
+	third := commitFile(t, dir, "b.txt", "b\n", "add b")
+	git := NewRunner(dir)
+
+	t.Run("applies_a_commit_without_touching_the_checkout", func(t *testing.T) {
+		pick, err := git.CherryPickTree(base, third)
+		if err != nil {
+			t.Fatalf("CherryPickTree: %v", err)
+		}
+		if pick.Conflicted {
+			t.Fatalf("unexpected conflict in %v", pick.Paths)
+		}
+		files, err := git.Run("ls-tree", "--name-only", pick.Tree)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if files != "a.txt\nb.txt" {
+			t.Errorf("picked tree holds %q, want a.txt and b.txt", files)
+		}
+		// b.txt is applied on base, where a.txt still has one line.
+		if content, _ := git.Run("show", pick.Tree+":a.txt"); content != "one" {
+			t.Errorf("a.txt = %q, want it as it is on base", content)
+		}
+		if head, _ := git.Run("rev-parse", "HEAD"); head != third {
+			t.Errorf("HEAD moved to %s", head)
+		}
+	})
+
+	t.Run("reports_conflicted_paths", func(t *testing.T) {
+		// A commit that rewrites the same line differently from second.
+		exec.Command("git", "-C", dir, "checkout", "-q", "-b", "other", base).Run()
+		other := commitFile(t, dir, "a.txt", "one\nother\n", "diverge")
+
+		pick, err := git.CherryPickTree(other, second)
+		if err != nil {
+			t.Fatalf("CherryPickTree: %v", err)
+		}
+		if !pick.Conflicted || len(pick.Paths) != 1 || pick.Paths[0] != "a.txt" {
+			t.Errorf("pick = %+v, want a conflict in a.txt", pick)
+		}
+		if pick.Tree != "" {
+			t.Errorf("conflicted pick returned tree %q", pick.Tree)
+		}
+	})
+}

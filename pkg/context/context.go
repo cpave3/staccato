@@ -154,6 +154,18 @@ func Load(repoPath string) (*StaccatoContext, error) {
 	}, nil
 }
 
+// Reload re-reads the graph from storage. A context that lives longer than one
+// command, like the one the MCP server holds, goes stale as soon as another
+// process changes the graph.
+func (sc *StaccatoContext) Reload() error {
+	fresh, err := Load(sc.RepoPath)
+	if err != nil {
+		return err
+	}
+	*sc = *fresh
+	return nil
+}
+
 // Save persists the graph to either the shared ref or local file.
 func (sc *StaccatoContext) Save() error {
 	if sc.sharedRef != "" {

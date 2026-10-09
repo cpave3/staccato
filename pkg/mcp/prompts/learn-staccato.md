@@ -54,6 +54,12 @@ Each branch in the stack builds on its parent. When a parent changes (e.g., afte
 | `st log` | Display the stack tree |
 | `st status` | Display stack tree with PR status |
 
+### Splitting a Branch
+| Command | Description |
+|---------|-------------|
+| `st split describe [branch]` | Print a branch's commits, changed files and churn as JSON |
+| `st split apply <plan.json>` | Split a branch into stacked branches from a JSON plan (`--dry-run`, `--exec "<cmd>"`, `--json`) |
+
 ### Sync & PRs
 | Command | Description |
 |---------|-------------|
@@ -88,8 +94,42 @@ st down                    # Navigate to the branch to modify
 st modify --all            # Amend and auto-restack downstream
 ```
 
-### Split a large change into a stack
-Use the `split-monolithic-pr` prompt for guided help splitting a large PR into focused stacked branches.
+### Split a large branch into a stack
+You decide where the boundaries go. Staccato builds the slices and moves the branches in one step, so do not reset, stage, or cherry-pick by hand.
+
+```bash
+st split describe                                  # JSON inventory; keep "head"
+# write plan.json (below)
+st split apply plan.json --dry-run                 # check the plan; nothing moves
+st split apply plan.json --exec "<build command>"  # apply only if every slice builds
+```
+
+A plan lists the slices from the bottom of the stack to the top:
+
+```json
+{
+  "branch": "feature-big",
+  "head": "<head from st split describe>",
+  "slices": [
+    {"name": "feature-big-core", "message": "feat: order model", "paths": ["pkg/core/"]},
+    {"name": "feature-big-api", "commits": ["1a2b3c4d5e6f"]},
+    {"name": "feature-big", "message": "feat: order list page", "rest": true}
+  ]
+}
+```
+
+- Each slice takes its content from exactly one of `paths`, `commits`, or `"rest": true`.
+- `paths` are pathspecs relative to the repository root. Every changed file they match gets its **final** content in one new commit. Needs a `message`.
+- `commits` are existing commits of the branch, kept with their message and author. No `message`.
+- `"rest": true` takes everything the earlier slices left out. Last slice only. Needs a `message`.
+- The top slice must hold exactly what the branch held before. A plan that leaves a file out is refused and nothing changes; ending with `rest` guarantees completeness.
+- Name the top slice after the original branch so its PR and child branches stay attached. To delete the original name instead, add `"drop_original": true`.
+- Cut at `commits` only when each commit belongs wholly to one slice. Split by `paths` when a commit touches files that belong in different slices, or when `churn` in the `describe` output is much larger than `totals` (the commits rework each other).
+- The working tree is not touched, so uncommitted changes are fine. There is no undo command: when a split rewrites commits, the originals are kept on the `backup/manual/...` branch named in the output.
+- For a file whose changes belong to two slices, give the earlier slice `"overrides": {"README.md": "/path/to/intermediate-content"}` and list `README.md` in a later slice's `paths`.
+- Child branches are moved onto the top slice automatically. Any listed under `needs_restack` in the result were already behind: run `st restack` on them.
+
+Use the `split-monolithic-pr` prompt for the full guide, including how to choose the boundaries.
 
 ### Handle conflicts during restack
 ```bash
@@ -114,8 +154,14 @@ When using Staccato via MCP, prefer these structured tools for queries:
 - `st_status` — returns JSON tree with PR status
 - `st_current` — returns JSON with current branch info
 
+To split a branch, use the dedicated tools:
+- `st_split_describe` — JSON inventory of a branch (`branch`)
+- `st_split_apply` — apply a split plan (`plan`: the plan object, which must name its `branch`; `dry_run`)
+
 For all other operations, use `st_run` with any command string:
 - `st_run("up")`, `st_run("modify --all")`, `st_run("delete feature-x")`
+
+`--exec` is not available over MCP, through either `st_split_apply` or `st_run`. Run `st split apply --exec` from a shell.
 
 ## Key Principles
 

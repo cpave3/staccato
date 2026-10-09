@@ -318,3 +318,39 @@ func TestLoad_Save_Worktree(t *testing.T) {
 		t.Error("expected wt-branch in graph saved from worktree")
 	}
 }
+
+// --- Reload tests ---
+
+func TestReload_PicksUpGraphChangedByAnotherProcess(t *testing.T) {
+	repo, branch := setupRepo(t)
+	defer repo.Cleanup()
+
+	// A long-lived context, such as the one the MCP server holds.
+	held, err := Load(repo.Dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Another process adds a branch to the graph on disk.
+	other, err := Load(repo.Dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	other.Graph.AddBranch("feature", branch, "base", "head")
+	if err := other.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, ok := held.Graph.GetBranch("feature"); ok {
+		t.Fatal("held context saw the change without reloading")
+	}
+
+	if err := held.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if _, ok := held.Graph.GetBranch("feature"); !ok {
+		t.Error("Reload did not pick up the branch added on disk")
+	}
+	if held.RepoPath == "" || held.Git == nil {
+		t.Error("Reload lost the repository path or git runner")
+	}
+}

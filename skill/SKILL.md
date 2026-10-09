@@ -29,6 +29,10 @@ When the staccato MCP server is connected, use these tools directly:
 - `st_append` — create child of current branch (`branch_name`)
 - `st_insert` — insert before current, reparent downstream (`branch_name`)
 
+**Splitting a branch:**
+- `st_split_describe` — inventory of a branch as JSON: commits, changed files, which commits touch which files (`branch`)
+- `st_split_apply` — split a branch into stacked branches from a plan (`plan`: object, `dry_run`: bool)
+
 **Stack operations:**
 - `st_restack` — rebase lineage onto parents (`to_current`: bool)
 - `st_continue` — resume after conflict resolution
@@ -60,6 +64,8 @@ st sync [--dry-run] [--down]                  st pr make [--web]
 st backup                                     st restore [branch] [--all]
 st reviews [--current] [--to-current] [--out path]
 st graph share / local / which
+st split describe [branch]
+st split apply <plan.json | -> [--dry-run] [--exec "cmd"] [--json]
 ```
 
 ## Workflows
@@ -116,6 +122,39 @@ st reviews --to-current      # CLI: ancestors through current branch
 ```
 
 Review collection filters bot accounts by allowlist. Authors ending in `[bot]` are excluded unless they are `coderabbitai[bot]`, `cubic-dev-ai[bot]`, or `greptile-apps[bot]`.
+
+### Split a large branch into a stack
+
+Use this when one branch is too big to review. You choose the boundaries; staccato builds the slices and moves the branches in one step. Do not reset, stage, or cherry-pick by hand.
+
+1. **Describe.** `st_split_describe(branch: "feature-big")` or `st split describe`. Keep `head` from the output. Cut at `commits` only when each commit belongs wholly to one slice; split by `paths` when a commit touches files that belong in different slices, or when `churn` is much larger than `totals` (the commits rework each other).
+2. **Plan.** Write JSON listing the slices from the bottom of the stack to the top:
+   ```json
+   {
+     "branch": "feature-big",
+     "head": "<head from describe>",
+     "slices": [
+       {"name": "feature-big-core", "message": "feat: order model", "paths": ["pkg/core/"]},
+       {"name": "feature-big-api", "message": "feat: orders over HTTP", "paths": ["pkg/api/"]},
+       {"name": "feature-big", "message": "feat: order list page", "rest": true}
+     ]
+   }
+   ```
+   Each slice uses one of: `paths` (pathspecs from the repository root; matched files get their final content), `commits` (existing commits, kept as they are), or `"rest": true` (everything left, last slice only). `paths` and `rest` slices need a `message`.
+3. **Dry run.** `st_split_apply(plan: {...}, dry_run: true)` or `st split apply plan.json --dry-run`. Nothing moves; you get each slice's size and a commit id to inspect.
+4. **Verify and apply.** From a shell, `st split apply plan.json --exec "<build command>"` checks out each slice, runs the command, and applies only if it passes everywhere. Without a build command: `st_split_apply(plan: {...})`.
+
+Things to know:
+
+- **The top slice must match the original branch exactly.** A plan that leaves a file out is refused and nothing changes. Ending with a `"rest": true` slice guarantees completeness.
+- **Name the top slice after the original branch** so its PR and child branches stay attached. To delete the original name instead, add `"drop_original": true`.
+- **Each slice must build on its own.** Keep a changed signature with its call sites, and a new type with its first use.
+- **A file whose changes belong to two slices:** give the earlier slice `"overrides": {"README.md": "/path/to/intermediate-content"}`, and list `README.md` in a later slice's `paths` to finish it.
+- **Child branches move onto the top slice automatically**, with no checkout and no conflicts. Children that were already behind their parent are reported under `needs_restack`.
+- **`backup` in the result** names a branch holding the original commits. Leave it and tell the user.
+- `--exec` is CLI only; it is not available through `st_split_apply` or `st_run`.
+
+The `split-monolithic-pr` MCP prompt has the full guide, including how to choose boundaries.
 
 ### Adopt existing branches into a stack
 ```

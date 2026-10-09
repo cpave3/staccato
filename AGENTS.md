@@ -17,6 +17,7 @@ st/
 │   ├── switch.go          # switchTUI model + switch command
 │   ├── new.go, append.go, insert.go, restack.go, continue.go
 │   ├── backup.go, restore.go, log.go, status.go, pr.go
+│   ├── split.go           # split describe/apply (thin wrapper over pkg/split)
 │   └── *_test.go          # E2E + TUI model tests by command/behavior
 ├── internal/testutil/
 │   └── git.go             # Test helpers (GitRepo, isolated repos)
@@ -26,6 +27,7 @@ st/
 │   ├── backup/            # Backup/restore system (auto + manual)
 │   ├── restack/           # Topological sort & restack engine
 │   ├── attach/            # Lazy attachment logic
+│   ├── split/             # Split one branch into stacked branches from a plan
 │   ├── forge/             # Forge detection (GitHub, etc.)
 │   ├── hooks/             # Hook discovery & execution engine
 │   └── output/            # CLI formatting utilities
@@ -79,6 +81,16 @@ st/
 - `IsBranchInGraph()` / `FindRoot()`: Graph traversal helpers
 - `GetUnattachedBranches()`: Branches not in graph
 
+#### pkg/split
+- Shared by the CLI (`cmd/st/split.go`) and the MCP tools (`pkg/mcp/tools_split.go`); both are thin wrappers, so behavior cannot drift between them
+- `Describe(sc, branch)`: inventory of a branch (commits, changed files, churn) as a `Description`
+- `ParsePlan(data)` / `Plan.Validate()`: strict JSON decoding (unknown keys rejected) and shape checks
+- `Apply(sc, plan, opts)`: builds every slice, then moves all branches in one `git update-ref --stdin` transaction
+- Slices are built with plumbing in a scratch index (`GIT_INDEX_FILE`, `read-tree`, `update-index --index-info`, `write-tree`, `commit-tree`); the working tree and real index are never touched
+- **Invariant**: the top slice's tree equals the original branch's tree. Everything else relies on it: because content is identical, descendants are re-parented with `commit-tree` (same tree, new parent) instead of going through the restack engine, so no checkout happens and no conflict is possible
+- `--exec` verification (`verify.go`) is the only part that checks anything out; it restores the starting checkout on failure and on SIGINT/SIGTERM
+- Not exposed over MCP: `--exec` (arbitrary shell). `st_run` refuses it too
+
 #### pkg/hooks
 - `Event` type with constants: `PostPRCreate`, `PostPRView`, `PostBranchCreate`, `PostBranchDelete`, `PostRestack`, `PostRestackConflict`, `PostSync`, `PostAttach`, `PreSync`, `PreRestack`
 - `Context` struct: `Event`, `RepoPath`, `Branch`, `Data map[string]any` — marshalled as JSON to hook stdin
@@ -123,6 +135,8 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 | `backup` | Manual snapshot of all stack branches | — |
 | `log` | Display stack tree | — |
 | `switch` | Interactive branch selector (TUI) | — |
+| `split describe [branch]` | JSON inventory of a branch for planning a split | — |
+| `split apply <plan.json\|->` | Split a branch into stacked branches from a JSON plan | `--dry-run`, `--exec`, `--json` |
 
 | `graph share` | Move graph to shared git ref | — |
 | `graph local` | Move graph back to local file | — |

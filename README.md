@@ -73,6 +73,8 @@ st sync --down
 | `st graph local`      | Move the graph back to local-only storage          |                               |
 | `st graph which`      | Show current graph storage mode                    |                               |
 | `st graph repair`     | Reconcile current stack with local branch history  | `--dry-run`                   |
+| `st split describe [branch]` | Print a branch's commits and changed files as JSON | |
+| `st split apply <plan>` | Split a branch into stacked branches from a JSON plan | `--dry-run`, `--exec <cmd>`, `--json` |
 | `st mcp`              | Start the MCP server (stdio transport)             |                               |
 
 ### `st attach`
@@ -107,6 +109,48 @@ Rebases all branches in your lineage onto their parents. Use `--to-current` to r
 ### `st graph repair`
 
 After restoring or manually moving branch refs, run `st graph repair --dry-run` to inspect proposed base/head corrections, then `st graph repair` to apply them. Only the checked-out branch's top-level stack and its descendants are inspected; sibling stacks are unchanged. Check out a tracked branch first, and finish or abort any in-progress rebase. If the original fork point cannot be identified, repair refuses to guess. Restack also stops before rewriting branches when a recorded base is not in the branch's history.
+
+### `st split`
+
+Splits one branch of a stack into several smaller stacked branches for review. It is built for an AI agent to drive: the agent decides where the boundaries go, and staccato does the mechanics.
+
+```bash
+st split describe            # JSON: commits, changed files, which commits touch which files
+st split apply plan.json --dry-run
+st split apply plan.json --exec "task build"
+```
+
+A plan lists the slices from the bottom of the stack to the top:
+
+```json
+{
+  "branch": "feature-big",
+  "head": "<head from st split describe>",
+  "slices": [
+    { "name": "feature-big-core", "message": "feat: order model", "paths": ["pkg/core/"] },
+    { "name": "feature-big-api", "commits": ["1a2b3c4d5e6f"] },
+    { "name": "feature-big", "message": "feat: order list page", "rest": true }
+  ]
+}
+```
+
+Each slice takes its content from one source:
+
+- **`paths`**: pathspecs relative to the repository root. Every changed file they match is brought to its final content in one new commit.
+- **`commits`**: existing commits of the branch, kept with their message and author. Cutting at existing commit boundaries rewrites nothing.
+- **`rest`**: everything the earlier slices left out. Last slice only.
+
+A `paths` slice can also carry `"overrides": {"<path>": "<content file>"}` for a file whose changes belong to two slices: it gives the file content that is only partway to final, and a later slice lists the path to finish it.
+
+What `apply` guarantees:
+
+- **Nothing is lost.** The top slice must hold exactly the content the branch had before. A plan that leaves anything out is refused, with the missing files listed.
+- **Nothing is half-done.** Every slice is built with git plumbing before any branch moves, and all branches move in one ref transaction. A plan that cannot be carried out changes nothing. The working tree is not touched, so uncommitted changes are fine.
+- **Descendants follow.** Branches stacked on top are re-parented onto the top slice without a checkout and without conflicts. A descendant that was already behind its parent is left alone and reported.
+
+`--dry-run` builds the slices and reports their sizes and commit ids without moving anything. `--exec <cmd>` checks out each slice in turn and runs the command, like `git rebase --exec`, and applies the split only if it succeeds in every slice.
+
+Name the top slice after the original branch so its pull request and child branches stay attached; to delete the original name instead, set `"drop_original": true`. When a split rewrites commits, the originals are kept on a `backup/manual/...` branch.
 
 ### `st reviews`
 
@@ -282,7 +326,7 @@ Add to your `opencode.json`:
 }
 ```
 
-### Available tools (20)
+### Available tools (22)
 
 **Git helpers**: `st_git_log`, `st_git_diff_stat`, `st_git_cherry_pick`, `st_git_checkout`, `st_git_reset`, `st_git_add`, `st_git_commit`, `st_git_status`, `st_git_diff`
 
@@ -294,9 +338,11 @@ Add to your `opencode.json`:
 
 **Sync/PR**: `st_sync`, `st_pr`
 
+**Split**: `st_split_describe`, `st_split_apply`
+
 ### Prompt
 
-The server exposes a `split-monolithic-pr` prompt that guides an LLM through analyzing a large PR and splitting it into focused, stacked branches. Accepts `base_branch` and `source_branch` arguments.
+The server exposes a `split-monolithic-pr` prompt that guides an LLM through choosing where to cut a large branch and carrying the split out with `st_split_describe` and `st_split_apply`. Accepts `base_branch` and `source_branch` arguments.
 
 ## Development
 

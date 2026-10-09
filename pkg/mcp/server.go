@@ -25,6 +25,7 @@ func NewServer(sc *stcontext.StaccatoContext) *server.MCPServer {
 	registerSyncTools(s, sc)
 	registerRunTool(s, sc)
 	registerReviewTools(s, sc)
+	registerSplitTools(s, sc)
 	registerPrompts(s)
 
 	return s

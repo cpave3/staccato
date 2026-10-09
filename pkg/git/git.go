@@ -1,7 +1,9 @@
 package git
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -31,6 +33,36 @@ func (r *Runner) Run(args ...string) (string, error) {
 		return "", fmt.Errorf("git %s failed: %w\nOutput: %s", strings.Join(args, " "), err, string(output))
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// Output executes a git command with extra environment variables and optional
+// stdin, returning stdout exactly as git wrote it. Unlike Run, stderr is only
+// reported on failure, so the output is safe to parse. Use it for
+// NUL-separated output, where trimming would corrupt a path that starts or
+// ends with whitespace.
+func (r *Runner) Output(env []string, stdin string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.repoPath
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s failed: %w\nOutput: %s", strings.Join(args, " "), err, stderr.String())
+	}
+	return stdout.String(), nil
+}
+
+// RunWith is Output with surrounding whitespace trimmed, for commands that
+// print a single value.
+func (r *Runner) RunWith(env []string, stdin string, args ...string) (string, error) {
+	out, err := r.Output(env, stdin, args...)
+	return strings.TrimSpace(out), err
 }
 
 // GetCurrentBranch returns the name of the current branch
@@ -228,6 +260,50 @@ func (r *Runner) MergeAddsNoChanges(target, branch string) (bool, error) {
 		return false, err
 	}
 	return mergedTree == targetTree, nil
+}
+
+// Pick is the outcome of applying a commit with CherryPickTree.
+type Pick struct {
+	// Tree is the resulting tree. It is empty when the pick conflicted.
+	Tree       string
+	Conflicted bool
+	// Paths are the conflicted paths.
+	Paths []string
+}
+
+// CherryPickTree computes the tree that results from applying commit on top of
+// onto, without touching the index or the working tree. It needs git 2.40 or
+// newer.
+func (r *Runner) CherryPickTree(onto, commit string) (Pick, error) {
+	cmd := exec.Command("git", "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", "--merge-base="+commit+"^", onto, commit)
+	cmd.Dir = r.repoPath
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	// NUL-separated: the OID of the merged tree, then any conflicted paths.
+	var fields []string
+	for _, field := range strings.Split(stdout.String(), "\x00") {
+		if field != "" {
+			fields = append(fields, field)
+		}
+	}
+	if err != nil {
+		// Exit code 1 means the pick conflicted. The exit status decides, not
+		// the path list, which git may leave empty.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			pick := Pick{Conflicted: true}
+			if len(fields) > 1 {
+				pick.Paths = fields[1:]
+			}
+			return pick, nil
+		}
+		return Pick{}, fmt.Errorf("git merge-tree failed (it needs git 2.40 or newer): %w\nOutput: %s", err, stderr.String())
+	}
+	if len(fields) == 0 {
+		return Pick{}, fmt.Errorf("git merge-tree printed no tree")
+	}
+	return Pick{Tree: fields[0]}, nil
 }
 
 // FastForwardBranch updates a branch ref to point to target without checkout

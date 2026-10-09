@@ -1,195 +1,170 @@
-# Splitting Changes into Focused Commits
+# Splitting a Large Branch into a Reviewable Stack
 
-You are helping split a large set of changes into focused, logical commits. This can be used for stacked PRs (multiple branches for team review) or cleaning up history on a single branch.
+You are helping split one large branch into several smaller stacked branches, so each can be reviewed on its own.
 
 ## Context
 
 - Base branch: {{base_branch}}
 - Source branch: {{source_branch}}
 
-## Mode Selection
+Your job is to decide where the boundaries go. Staccato does the mechanics: you describe the split in a JSON plan, and it builds every slice, checks the result, and moves the branches in one step. You never reset, stage, cherry-pick, or rebase by hand.
 
-Choose your approach based on the goal:
+Two guarantees hold for every split:
 
-- **Stacked PRs**: Create multiple branches with `st new`/`st append` for independent review of each piece
-- **Single branch**: Split into sequential commits on the current branch for clean history
+- **Nothing is lost.** The top slice must end with exactly the content the branch had. A plan that leaves something out, or changes anything, is refused.
+- **Nothing is half-done.** Every slice is built before any branch moves. A plan that cannot be carried out changes nothing, so you can fix the plan and try again.
 
-The techniques below apply to both modes. When instructions reference branches, single-branch mode uses commits on the same branch instead.
+## Step 0: Make sure the branch is in the stack
 
-## Step 1: Analyze the Changes
+The branch must be tracked by staccato and up to date with its parent.
 
-Use `st_git_log` with `stat: true` to see all commits and files changed.
-Look for:
+- Not tracked yet: `st_attach` with `branch_name` and `parent` (`st attach <branch> --parent <parent>`).
+- Behind its parent: `st_restack` (`st restack`) first.
 
-- Logical groupings by feature or subsystem
-- Dependencies between changes (see "Atomic Change Groups" in Step 2)
-- Natural split points
+## Step 1: Read the inventory
 
-**Determine your approach:**
+Call `st_split_describe` with the branch name (`st split describe [branch]`). It returns JSON with every commit, every changed file, and which commits touch which files. Keep `head`: the plan uses it.
 
-- If commits are already logically organized -> use **cherry-pick** (Option A)
-- If commits are messy or need splitting -> use **soft reset** (Option B)
+What to look for:
 
-## Step 2: Plan the Stack
+- **`churn` against `totals`.** `totals` is the net change. `churn` adds up what every commit did. If churn is much larger, the commits rework each other (code written and later deleted, a cleanup commit at the end). Cutting at commit boundaries would then show reviewers code that a later slice removes, so split by **paths** instead.
+- **`files[].commits`.** A file touched by several commits ties those commits together.
+- **`files[].renamed_from`.** A rename is listed as a deleted path and an added path. Put both in the same slice.
+- **`commits[].merge`.** Merge commits cannot be assigned by commit; use paths for that branch.
+- **`children`.** Branches stacked on top are moved onto the top slice for you.
 
-Group changes by these principles (in priority order):
+Read the diff itself where the inventory is not enough to judge a boundary.
 
-1. **Infrastructure/setup** - Database migrations, config changes
-2. **Foundation code** - Models, utilities, shared components
-3. **Core features** - Business logic, services
-4. **API layer** - Endpoints, controllers
-5. **UI components** - Frontend changes
-6. **Tests** - Can be grouped with their feature or separate
+## Step 2: Decide the boundaries
 
-Each **branch** must be:
+Aim for three to five slices that each tell one story. Order them so that each builds on the ones below it, usually:
 
-- Independently reviewable
-- Buildable and testable on its own
-- Focused on one logical concern
+1. Infrastructure and setup: migrations, configuration
+2. Foundation: models, shared types, utilities
+3. Core logic: services, business rules
+4. API layer: endpoints, controllers
+5. UI
+6. Tests, with the code they cover unless there is a reason to separate them
 
-Individual commits within a branch do **not** need to compile. The branch as a whole is the unit of correctness. This means you can commit files freely and fix up compilation issues with additional commits before moving to the next branch.
+Each slice must be:
 
-### Atomic Change Groups
+- Reviewable on its own, with one clear concern
+- Buildable and testable on its own: the branch is the unit of correctness
 
-Before choosing voluntary groupings, identify **forced groupings** — changes that _must_ land on the same branch to keep that branch compilable:
+### Changes that must stay together
 
-- **Function/method signature changes** must include all callers on the same branch. If you change a function's parameters, every call site must be on that branch or the branch won't compile.
-- **New types, constants, or interfaces** must be on the same branch as (or an earlier branch than) their first usage.
-- **Import/require additions** must accompany the code that uses them.
-- **Deletion of a function/type** must be on the same branch as (or a later branch than) the removal of all callers.
+Work through these before grouping anything by preference. A slice that breaks one of them will not compile.
 
-Work through these constraints first, then arrange the remaining changes into logical groups. If a forced grouping spans what you'd otherwise split into separate branches, merge those branches.
+- **A changed function signature** goes with every call site.
+- **A new type, constant, or interface** goes in the same slice as its first use, or an earlier one.
+- **An import** goes with the code that needs it.
+- **A deleted function or type** goes in the same slice as the removal of its last caller, or a later one.
 
-### Commit Message Conventions
+If a forced grouping spans two slices you wanted to keep apart, merge the slices.
 
-Each commit message should describe the "what and why" of that specific change, not the overall feature. Use conventional commit prefixes:
+### Choosing how to describe each slice
 
-- `feat:` — new functionality
-- `fix:` — bug fix
-- `refactor:` — restructuring without behavior change
-- `test:` — adding or updating tests
-- `docs:` — documentation changes
-- `chore:` — build, tooling, or config changes
+| The branch looks like | Use |
+|---|---|
+| Clean, thematic commits already in a sensible order | `commits` |
+| Messy history, rework, or a single large commit | `paths` |
+| One commit mixes two concerns | `paths` for the whole plan |
 
-Example: `feat: add graph storage mode for shared commit data` rather than `part 3 of PR split`.
+Mixing is allowed, but `paths` means the **final** version of each file. A commit placed after a `paths` slice is replayed on top of it and is refused if it does not apply cleanly. When in doubt, use `paths` throughout.
 
-## Step 3: Create the Stack
+### A file whose changes belong to two slices
 
-Starting from base, create your stack:
+Typical cases: a README, a registration or routing file, a shared types file.
 
-```bash
-# First branch (from trunk)
-st new feature/01-database-schema
+- Usually simplest: give the whole file to the earliest slice that needs it, as long as that version does not refer to code from a later slice.
+- Otherwise use an **override**: write the content the file should have at the earlier slice to a scratch file, and name it in that slice's `overrides`. A later slice then lists the path to bring it to its final content.
 
-# Subsequent branches (from current)
-st append feature/02-models
-st append feature/03-api
-st append feature/04-ui
+## Step 3: Write the plan
+
+List slices from the bottom of the stack (nearest the parent) to the top.
+
+```json
+{
+  "branch": "feature-big",
+  "head": "<head from st_split_describe>",
+  "slices": [
+    {
+      "name": "feature-big-core",
+      "message": "feat: add order model and validation",
+      "paths": ["pkg/core/", "go.mod"],
+      "overrides": {"README.md": "/tmp/split/README.core.md"}
+    },
+    {
+      "name": "feature-big-api",
+      "message": "feat: expose orders over HTTP",
+      "paths": ["pkg/api/", "README.md"]
+    },
+    {
+      "name": "feature-big",
+      "message": "feat: order list page",
+      "rest": true
+    }
+  ]
+}
 ```
 
-## Step 4: Populate Each Branch
+Rules:
 
-There are two approaches. Choose based on your situation:
+- A slice takes its content from exactly one of `paths` (optionally with `overrides`), `commits`, or `"rest": true`.
+- `paths` are pathspecs relative to the repository root. A directory takes every changed file under it that no earlier slice has taken. Needs a `message`.
+- `commits` are existing commits of the branch, kept with their message and author, in the order you list them. No `message`.
+- `"rest": true` takes everything the earlier slices left out. Last slice only. Needs a `message`. Ending with it is the easy way to be complete.
+- `head` makes the split refuse to run if the branch has moved since you described it. Include it.
+- **Name the top slice after the original branch.** Its pull request and its child branches then stay attached. To give every slice a new name and delete the original, set `"drop_original": true`.
+- A slice name cannot be nested under a branch that still exists: `feature/core` cannot exist next to `feature`.
+- JSON does not allow comments.
 
-### Option A: Cherry-Pick (when commits are already well-organized)
+Write commit messages that describe that slice's change, not "part 2 of the split". Use conventional prefixes: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`.
 
-Use when each commit cleanly maps to one stack branch:
+## Step 4: Dry run
 
-1. `st_git_checkout` to the branch
-2. `st_git_cherry_pick` the relevant commits
-3. Verify the branch builds
+Call `st_split_apply` with the plan and `dry_run: true` (`st split apply plan.json --dry-run`).
 
-If cherry-pick conflicts:
+Nothing moves. You get each slice's size and a commit id you can inspect, for example `git show --stat <sha>`. Check that the sizes are balanced and that each slice holds what you intended. If the plan is refused, the message says what to change.
 
-- Resolve manually
-- Run `git cherry-pick --continue`
+Show the user the proposed slices before applying if they have not seen the boundaries.
 
-### Option B: Soft Reset (when commits need to be split/reorganized)
+## Step 5: Verify that each slice builds
 
-Use when a single commit contains changes for multiple branches, or when you want cleaner history:
+A slice that does not build cannot go through CI on its own.
 
-1. **Note the original SHA** — run `st_git_log` and record the current HEAD SHA for recovery
-2. **Create a backup** — run `st backup` (CLI) or use the backup tool to snapshot all stack branches before any destructive operations. This gives you a named restore point beyond just the SHA.
-3. `st_git_checkout` to the source branch
-4. `st_git_reset` with `mode: "soft"` and `ref` pointing to base branch
-   - This moves HEAD to the base but keeps all changes **staged**
-5. `st_git_reset` with `mode: "mixed"` (no ref needed)
-   - This **unstages everything**, leaving all changes in the working tree as unstaged modifications
-6. `st_git_status` to see all changed files as unstaged modifications
-7. For each branch (in dependency order):
-   - `st_git_checkout` to the target branch — uncommitted changes stay in the working tree when there are no conflicts. With stacked branches, `st append` creates the next branch from the current commit, so uncommitted changes carry forward cleanly.
-   - `st_git_add` whole files that belong on this branch
-   - `st_git_commit` with a descriptive message
-   - If a file has changes belonging to **different branches**, see "Partial File Staging" below
-   - Repeat adding and committing until all files for this branch are included
-   - **Verify the branch compiles** — build and run tests. If something is missing or broken, add fixup commits until the branch is green.
-   - Move to the next branch
-
-#### Working Tree State
-
-During a soft-reset split, the working tree contains ALL changes simultaneously. This means:
-
-- The working tree won't compile (it's a mix of old and new code from all branches)
-- You cannot run tests from the working tree directly
-- Build verification happens **after committing all files for a branch**, not from the working tree
-- This is expected — don't be alarmed by errors in unstaged files
-
-#### Partial File Staging
-
-Most files belong entirely to one branch and can be staged with a simple `st_git_add`. Partial file staging is only needed when a single file has changes destined for **different branches** — for example, a cleanup (branch 1) and a feature change (branch 2) in the same file.
-
-**Pattern: Save, checkout base, apply, stage, restore**
-
-1. Save the full modified file: copy its contents or `st_git_stash` with `push: true`
-2. `st_git_checkout` the file from the base branch to get the original version
-3. Manually apply only the changes for this branch (edit the file to include just the relevant hunks)
-4. `st_git_add` the file
-5. Restore the full modified version from stash or your saved copy
-
-The remaining changes stay in the working tree for later branches.
-
-Benefits of soft reset:
-
-- Can split a single commit into multiple logical commits
-- Creates cleaner history (no "cherry-pick from X" markers)
-- More control over exactly what goes where
-- Can reorganize code that was poorly structured
-
-Caveats:
-
-- Requires careful tracking of which changes belong where
-- Use `st_git_diff` and `st_git_status` frequently to verify state
-
-## Step 5: Verify Completeness
-
-After all commits are made, verify nothing was lost:
+From a shell, pass the project's build or test command:
 
 ```bash
-git diff <original-sha>..HEAD
+st split apply plan.json --exec "<build or test command>"
 ```
 
-This should produce **empty output**. If it shows differences, changes were lost or altered during the split. Go back and fix the relevant commit.
+Each slice is checked out in turn and the command runs in it. The split is applied only if the command succeeds in every slice; otherwise nothing changes and the failing slice is named. This needs a working tree without uncommitted changes. Add `--dry-run` to verify without applying.
 
-Also run `st_git_status` to confirm no unstaged changes remain.
+`--exec` is not available through the MCP tools. Without a shell, build each commit id from the dry run yourself.
 
-## Step 6: Verify and Push
+When a slice fails, the usual cause is a file that belongs in an earlier slice. Move it, then run again.
 
-1. `st_log` - Verify stack structure
-2. `st_restack` - Ensure all branches are rebased correctly
-3. `st_sync` - Push all branches
+## Step 6: Apply
 
-## Step 7: Create PRs
+Call `st_split_apply` without `dry_run` (`st split apply plan.json`).
 
-For each branch (bottom to top):
+The result lists the new branches, any descendants that were moved onto the top slice, and:
 
-- `st_pr` creates a PR targeting the parent branch
-- Add description explaining this piece of the feature
+- `backup`: a branch holding the original commits, kept whenever the split rewrote them. Leave it in place and tell the user its name. They can remove it later with `st backup clean` (interactive) or `git branch -D <backup>`.
+- `needs_restack`: descendants that were already behind their parent before the split. They were left untouched; run `st_restack` on them.
+- `warnings`: for example a commit that added nothing because an earlier slice already took its files.
 
-## Tips
+## Step 7: Push and open pull requests
 
-- **Naming**: Use numbered prefixes (`01-`, `02-`) for ordering
-- **Conflicts**: If `st_restack` conflicts, resolve and `st_continue`
-- **Merged branches**: `st_sync` auto-detects and removes merged branches
-- **Iteration**: Edit earlier branches, then `st_restack` to propagate
-- **Recovery**: If the split goes wrong, `git reset --hard <original-sha>` restores the original state, or use `st restore` to recover from a backup. Always note the SHA and create a backup before starting.
-- **Verify often**: Use `st_git_status` and `st_git_diff` to check state before each commit
+1. `st_log` to confirm the shape of the stack.
+2. `st_sync` to push every branch.
+3. `st_pr` for each new branch, bottom to top. Each pull request targets its parent branch.
+
+If the original branch already had a pull request, it now belongs to the top slice. Change its base to the slice below it, otherwise it still shows the whole change.
+
+## If something goes wrong
+
+- **The plan is refused**: nothing changed. Read the message, fix the plan, run again.
+- **The split is applied and you want it undone**: the `backup` branch from the result holds the original commits. Tell the user rather than rewriting branches by hand.
+- **A slice needs a small fix afterwards**: check it out, commit the fix, and `st_restack`. Use `st modify` to amend instead.
