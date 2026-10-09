@@ -5,12 +5,12 @@ import (
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/cobra"
 	stcontext "github.com/cpave3/staccato/pkg/context"
 	"github.com/cpave3/staccato/pkg/git"
 	"github.com/cpave3/staccato/pkg/graph"
 	"github.com/cpave3/staccato/pkg/output"
 	"github.com/cpave3/staccato/pkg/staleness"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -87,6 +87,7 @@ func init() {
 	rootCmd.AddCommand(backupCmd())
 	rootCmd.AddCommand(prCmd())
 	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(statCmd())
 	rootCmd.AddCommand(graphCmd())
 	rootCmd.AddCommand(detachCmd())
 	rootCmd.AddCommand(mcpCmd())
