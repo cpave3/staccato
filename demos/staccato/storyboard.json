@@ -29,6 +29,17 @@
   ],
   "scenes": [
     {
+      "id": "title",
+      "chapter": "Staccato",
+      "notes": "- Staccato: a Git stack manager for everyday feature work\n- Smaller PRs, less branch housekeeping; a quick tour of the workflows",
+      "shows": "An opening title card: Staccato — Smaller PRs. Less Git housekeeping.",
+      "card": {
+        "eyebrow": "A workflow demo",
+        "title": "Staccato",
+        "subtitle": "Smaller PRs. Less Git housekeeping."
+      }
+    },
+    {
       "id": "why-stack",
       "chapter": "Keep moving with smaller PRs",
       "notes": "- Familiar pain: large reviews or waiting for a dependency to merge\n- One order feature, three independently reviewable changes\n- Keep building on unmerged work; Staccato handles branch relationships",

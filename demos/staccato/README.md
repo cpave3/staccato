@@ -1,7 +1,8 @@
 # Staccato coworker demo
 
 `storyboard.json` is the recording studio's source of truth. It contains the
-agreed nine-scene plan, talking points and pictures, but no scripted narration.
+ten-scene plan, including the requested opening title card, talking points and
+pictures, but no scripted narration.
 Record each scene in Legato's studio; align visual actions to the takes afterward.
 
 ## Evidence and limitations
