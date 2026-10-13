@@ -1,0 +1,121 @@
+{
+  "title": "Staccato: smaller PRs, less Git housekeeping",
+  "theme": "legato",
+  "brief": "I want to demo staccato to my coworkers to show them the key workflows where it can save them time if they move to a git stacking workflow.",
+  "vocabulary": [
+    "Staccato",
+    "st",
+    "Git",
+    "GitHub",
+    "gh",
+    "trunk",
+    "stack",
+    "restack",
+    "st new",
+    "st append",
+    "st log",
+    "st down",
+    "st top",
+    "st modify",
+    "st continue",
+    "st abort",
+    "st sync",
+    "st pr make",
+    "st exec",
+    "st attach",
+    "st split",
+    "st split describe",
+    "st split apply"
+  ],
+  "scenes": [
+    {
+      "id": "why-stack",
+      "chapter": "Keep moving with smaller PRs",
+      "notes": "- Familiar pain: large reviews or waiting for a dependency to merge\n- One order feature, three independently reviewable changes\n- Keep building on unmerged work; Staccato handles branch relationships",
+      "shows": "A diagram comparing one large order-feature PR with three stacked PRs: API, validation, UI",
+      "image": {
+        "src": "assets/why-stack.svg"
+      }
+    },
+    {
+      "id": "build-stack",
+      "notes": "- st new starts from trunk; st append builds on the current branch\n- Commit with Git as usual: one reviewable change per branch\n- st log makes the parent relationships visible\n- Less branch setup and less remembering what depends on what",
+      "shows": "A terminal using st new feature/api, st append feature/validation, st append feature/ui and st log, with normal Git commits between branches",
+      "image": {
+        "src": "assets/build-stack.svg"
+      }
+    },
+    {
+      "id": "open-prs",
+      "chapter": "Review without a giant diff",
+      "notes": "- st sync pushes the stack; st sync --down fetches and updates the stack without pushing; st pr make targets each branch's parent\n- API targets trunk, validation targets API, UI targets validation\n- Smaller diffs for reviewers; continue working on the upper branches\n- Requires origin and authenticated GitHub CLI for PR creation",
+      "shows": "A terminal pushing with st sync and creating PRs bottom-up with st pr make, beside the three PR base/head relationships",
+      "image": {
+        "src": "assets/open-prs.svg"
+      }
+    },
+    {
+      "id": "review-feedback",
+      "chapter": "Fix once, update the stack",
+      "notes": "- Feedback arrives on the API while UI work already depends on it\n- st modify --all stages changes, amends the last commit and restacks branches above\n- Replaces the manual checkout-and-rebase loop; returns to the modified branch\n- For a new commit instead: git commit, st top, st restack",
+      "shows": "A terminal navigating down to feature/api, applying review feedback with st modify --all, then showing the updated three-branch stack",
+      "image": {
+        "src": "assets/review-feedback.svg"
+      }
+    },
+    {
+      "id": "conflict-recovery",
+      "notes": "- Git rebase conflicts still need resolution: by you or an appropriately equipped agent\n- Resolve and stage files, then st continue resumes the stack operation\n- st abort restores the pre-operation branches from automatic restack backups\n- Commit or stash unrelated changes before rewriting branches",
+      "shows": "A short conflict terminal sequence: resolve files, git add, st continue; a small callout for st abort",
+      "image": {
+        "src": "assets/conflict-recovery.svg"
+      }
+    },
+    {
+      "id": "merge-and-sync",
+      "chapter": "Let merged work disappear",
+      "notes": "- Bottom PR merges while the rest of the feature is still in progress\n- st sync fetches, updates trunk, removes detected merged branches, restacks and pushes\n- Less deleting branches, re-parenting children and rebasing by hand\n- Force-with-lease for rewritten branches; after a conflict, continue then sync again to push",
+      "shows": "Before/after stack diagrams and a terminal running st sync after the API PR merges, leaving validation and UI above updated trunk",
+      "image": {
+        "src": "assets/merge-and-sync.svg"
+      }
+    },
+    {
+      "id": "check-every-branch",
+      "chapter": "Check each reviewable slice",
+      "notes": "- A passing top branch does not prove every smaller PR passes\n- st exec checks each branch in the current lineage, bottom-up\n- One pass/fail report; returns to the starting branch\n- Clean tracked files first; choose the team's actual test command",
+      "shows": "A terminal running st exec \"go test ./...\" with a per-branch result report and the original checkout restored",
+      "terminal": {
+        "title": "Check the remaining branches • report stdout, live test stderr omitted",
+        "steps": [
+          {
+            "type": "st exec \"go test ./...\"",
+            "output": "Ran on 2 branch(es): go test ./...\n  ✔ feature/validation  passed  0.1s\n  ✔ feature/ui          passed  0.1s\n2 passed, 0 failed"
+          },
+          {
+            "type": "git branch --show-current",
+            "output": "feature/ui"
+          }
+        ]
+      }
+    },
+    {
+      "id": "split-large-branch",
+      "chapter": "Turn a big branch into a stack",
+      "notes": "- Already have a large branch? Split it instead of rebuilding the work by hand\n- Give an agent st split describe output; choose reviewable seams together, by commits, paths or intermediate file overrides\n- Inspect its JSON plan; preview with st split apply plan.json --dry-run, then apply with --exec to check every slice\n- Each slice builds on the previous one; the top slice preserves the original content and branches above stay attached",
+      "shows": "A large order-feature branch becoming API, validation and UI slices: a terminal inventory from st split describe, an agent-assisted JSON plan, dry-run preview, and st split apply plan.json --exec \"go test ./...\"",
+      "image": {
+        "src": "assets/split-large-branch.svg"
+      }
+    },
+    {
+      "id": "try-one-feature",
+      "chapter": "Start small",
+      "notes": "- Try one feature split into two or three dependent PRs\n- Keep ordinary Git commits; use Staccato for stack housekeeping\n- Existing work can join with st attach <branch> --parent <parent>\n- Payoff: smaller reviews, fewer repeated Git steps, less waiting",
+      "shows": "A closing card with the lifecycle new → append → modify → sync, and st attach as the entry point for existing branches",
+      "image": {
+        "src": "assets/try-one-feature.svg"
+      }
+    }
+  ]
+}

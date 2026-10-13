@@ -1,0 +1,145 @@
+{
+  "repo": "/tmp/staccato-demo-nyyvj0i6",
+  "captures": {
+    "build": [
+      {
+        "type": "st new feature/api",
+        "output": "✔ Created branch 'feature/api' on top of 'main'"
+      },
+      {
+        "type": "git add . && git commit -m \"Add order API\"",
+        "output": "[feature/api 90cc9fb] Add order API\n 2 files changed, 8 insertions(+)\n create mode 100644 api.go\n create mode 100644 api_test.go"
+      },
+      {
+        "type": "st append feature/validation",
+        "output": "✔ Created branch 'feature/validation' on top of 'feature/api'"
+      },
+      {
+        "type": "git add . && git commit -m \"Validate order quantities\"",
+        "output": "[feature/validation 9c5a3b9] Validate order quantities\n 1 file changed, 3 insertions(+)\n create mode 100644 validation.go"
+      },
+      {
+        "type": "st append feature/ui",
+        "output": "✔ Created branch 'feature/ui' on top of 'feature/validation'"
+      },
+      {
+        "type": "git add . && git commit -m \"Add order UI\"",
+        "output": "[feature/ui 14566c5] Add order UI\n 1 file changed, 3 insertions(+)\n create mode 100644 ui.go"
+      },
+      {
+        "type": "st log",
+        "output": "Stack:\n○ main\n  ○ feature/api\n    ○ feature/validation\n      ● feature/ui"
+      }
+    ],
+    "publish": [
+      {
+        "type": "st sync --down",
+        "output": "Fetching from remote...\nNo merged branches detected.\n\n✔ Sync complete: 0 merged, 3 restacked, 0 pushed"
+      },
+      {
+        "type": "st sync",
+        "output": "Fetching from remote...\nNo merged branches detected.\n\n✔ Sync complete: 0 merged, 3 restacked, 3 pushed"
+      }
+    ],
+    "modify": [
+      {
+        "type": "st down",
+        "output": "✔ Checked out 'feature/validation'"
+      },
+      {
+        "type": "st down",
+        "output": "✔ Checked out 'feature/api'"
+      },
+      {
+        "type": "st modify --all",
+        "output": "✔ Modified 'feature/api' and restacked 3 downstream branches"
+      },
+      {
+        "type": "st log",
+        "output": "Stack:\n○ main\n  ● feature/api\n    ○ feature/validation\n      ○ feature/ui"
+      },
+      {
+        "type": "git branch --show-current",
+        "output": "feature/api"
+      }
+    ],
+    "merge": [
+      {
+        "type": "st sync",
+        "output": "Fetching from remote...\n✔ Updated 'main' to match remote\n  ✔ Merged: 'feature/api'\n\n✔ Sync complete: 1 merged, 2 restacked, 2 pushed"
+      },
+      {
+        "type": "st log",
+        "output": "Stack:\n○ main\n  ○ feature/validation\n    ● feature/ui"
+      }
+    ],
+    "exec": [
+      {
+        "type": "st exec \"go test ./...\"",
+        "output": "Ran on 2 branch(es): go test ./...\n  ✔ feature/validation  passed  0.1s\n  ✔ feature/ui          passed  0.1s\n2 passed, 0 failed\n==> [1/2] feature/validation: go test ./...\nok  \texample.invalid/orders\t0.002s\n==> [2/2] feature/ui: go test ./...\nok  \texample.invalid/orders\t0.001s"
+      },
+      {
+        "type": "git branch --show-current",
+        "output": "feature/ui"
+      }
+    ],
+    "conflict": [
+      {
+        "type": "st modify --all",
+        "output": "⚠ Conflict while rebasing 'feature/validation'\n  Please resolve the conflicts and run 'st continue'\n  Or run 'st restore' to abort and restore from backup\nconflict during restack at 'feature/validation' — resolve the conflicts and run 'st continue'"
+      },
+      {
+        "type": "git add api.go",
+        "output": ""
+      },
+      {
+        "type": "st continue",
+        "output": "✔ Restacked 2 branch(es)"
+      }
+    ],
+    "split": [
+      {
+        "type": "st split describe",
+        "output": "{\n  \"branch\": \"feature/orders\",\n  \"parent\": \"main\",\n  \"worktree\": \"/tmp/staccato-demo-nyyvj0i6/split\",\n  \"base\": \"400848227a1febcfbf6a201fe5a513bc35643208\",\n  \"head\": \"1ebeb53660dd9d69433064667bb2f37cdc4a532a\",\n  \"children\": [],\n  \"totals\": {\n    \"files\": 4,\n    \"insertions\": 14,\n    \"deletions\": 0\n  },\n  \"churn\": {\n    \"insertions\": 14,\n    \"deletions\": 0\n  },\n  \"commits\": [\n    {\n      \"sha\": \"1ebeb53660dd\",\n      \"subject\": \"Build order feature\",\n      \"insertions\": 14,\n      \"deletions\": 0,\n      \"files\": [\n        \"api.go\",\n        \"api_test.go\",\n        \"ui.go\",\n        \"validation.go\"\n      ]\n    }\n  ],\n  \"files\": [\n    {\n      \"path\": \"api.go\",\n      \"status\": \"added\",\n      \"insertions\": 3,\n      \"deletions\": 0,\n      \"commits\": [\n        \"1ebeb53660dd\"\n      ]\n    },\n    {\n      \"path\": \"api_test.go\",\n      \"status\": \"added\",\n      \"insertions\": 5,\n      \"deletions\": 0,\n      \"commits\": [\n        \"1ebeb53660dd\"\n      ]\n    },\n    {\n      \"path\": \"ui.go\",\n      \"status\": \"added\",\n      \"insertions\": 3,\n      \"deletions\": 0,\n      \"commits\": [\n        \"1ebeb53660dd\"\n      ]\n    },\n    {\n      \"path\": \"validation.go\",\n      \"status\": \"added\",\n      \"insertions\": 3,\n      \"deletions\": 0,\n      \"commits\": [\n        \"1ebeb53660dd\"\n      ]\n    }\n  ]\n}"
+      },
+      {
+        "type": "st split apply plan.json --dry-run",
+        "output": "Dry run: \"feature/orders\" would become 3 branches on \"main\":\n  1.  feature/api         1 commit(s)  2 file(s)  +8/-0  83ceacf52b7b\n  2.  feature/validation  1 commit(s)  1 file(s)  +3/-0  18d42e28277d\n  3.  feature/orders      1 commit(s)  1 file(s)  +3/-0  7d77d49407aa\nNothing was changed."
+      },
+      {
+        "type": "st split apply plan.json --exec \"go test ./...\"",
+        "output": "Split \"feature/orders\" into 3 branches on \"main\":\n  1.  feature/api         1 commit(s)  2 file(s)  +8/-0  83ceacf52b7b\n  2.  feature/validation  1 commit(s)  1 file(s)  +3/-0  18d42e28277d\n  3.  feature/orders      1 commit(s)  1 file(s)  +3/-0  7d77d49407aa\nVerified each slice with: go test ./...\nOriginal commits kept at backup/manual/2026-10-13_21-37-19/feature/orders\n==> [1/3] feature/api: go test ./...\nok  \texample.invalid/orders\t0.001s\n==> [2/3] feature/validation: go test ./...\nok  \texample.invalid/orders\t0.002s\n==> [3/3] feature/orders: go test ./...\nok  \texample.invalid/orders\t0.001s"
+      },
+      {
+        "type": "st log",
+        "output": "Stack:\n○ main\n  ○ feature/api\n    ○ feature/validation\n      ● feature/orders"
+      }
+    ]
+  },
+  "plan": {
+    "branch": "feature/orders",
+    "head": "1ebeb53660dd9d69433064667bb2f37cdc4a532a",
+    "slices": [
+      {
+        "name": "feature/api",
+        "message": "Add order API",
+        "paths": [
+          "api.go",
+          "api_test.go"
+        ]
+      },
+      {
+        "name": "feature/validation",
+        "message": "Validate quantities",
+        "paths": [
+          "validation.go"
+        ]
+      },
+      {
+        "name": "feature/orders",
+        "message": "Add order UI",
+        "rest": true
+      }
+    ]
+  }
+}
