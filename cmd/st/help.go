@@ -338,6 +338,7 @@ not merged.
 - Adopt a branch made outside st: ` + "`st attach <branch> --parent <parent>`" + `.
 - Find out which branches of a stack build: ` + "`st exec --help`" + `.
 - Split a branch that is too large to review: ` + "`st split --help`" + `.
+- Get the pull request link of every branch: ` + "`st pr list`" + `.
 - Read the review feedback on the whole stack: ` + "`st reviews --help`" + `.
 - Recover after a restack went wrong: ` + "`st restore --help`" + `.
 - Check the version, and install the newest release: ` + "`st version`" + `, ` + "`st update`" + `.
