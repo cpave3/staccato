@@ -16,13 +16,31 @@ A deterministic, offline-first Git stack management tool inspired by Graphite an
 
 ## Installation
 
-```bash
-# Build from source
-go build -o st ./cmd/st/
+Download the binary for your platform from the newest release
+(`st-linux-amd64`, `st-linux-arm64` or `st-darwin-arm64`):
 
-# Symlink to your PATH
+```bash
+curl -fsSLo ~/.local/bin/st https://github.com/cpave3/staccato/releases/latest/download/st-linux-amd64
+chmod +x ~/.local/bin/st
+st version
+```
+
+`st update` installs the newest release over it later (`st update --check` only
+reports whether there is one), keeping the previous binary as `st.prev`. Each
+release lists the binaries' SHA-256 sums in `SHA256SUMS`.
+
+On macOS the binary is not notarized. Downloaded with `curl` it runs as is; if
+you downloaded it with a browser, clear the quarantine flag first:
+`xattr -d com.apple.quarantine ~/.local/bin/st`.
+
+Or build from source:
+
+```bash
+go build -o st ./cmd/st/
 ln -sf $(pwd)/st ~/.local/bin/st
 ```
+
+A build from source reports its version as `dev` and does not update itself.
 
 ## Quick Start
 
@@ -103,6 +121,8 @@ Performs a full sync cycle:
 If a merged branch is still checked out in another worktree, sync removes it from the stack but leaves the local branch in place, prints a warning, and succeeds. Later syncs retry the local deletion until the worktree releases the branch.
 
 Use `--down` to pull and restack without pushing. Use `--dry-run` to see what would be pushed.
+
+A branch the remote refuses to take is named with git's reason after the other branches are pushed, and `st sync` exits 1. `st sync --json` prints the result as JSON, with refused pushes under `failed_pushes`.
 
 ### `st restack`
 
@@ -306,6 +326,15 @@ In shared mode:
 - A fetch refspec is configured so `git fetch` pulls the graph ref too
 - Teammates cloning the repo get the shared graph on their first `st sync`
 
+### Moving a stack to another clone
+
+`st graph export` writes the current stack's graph (or `--all`) as a JSON document, after checking each branch is pushed. `st graph import <file>` in another clone fetches those branches and merges the document into that clone's graph branch by branch: a missing branch is created, one that is behind is fast-forwarded, and one with local commits the document lacks is left alone and reported. `--dry-run` shows what it would do. See `st graph import --help` for every outcome.
+
+```bash
+st sync && st graph export --output stack.json    # where the stack was built
+st graph import stack.json                        # where you carry on
+```
+
 ### Graph Format
 
 ```json
@@ -333,7 +362,7 @@ st --help               # every command, with examples
 st <command> --help     # usage, arguments, options and examples for one command
 ```
 
-- `st log --json` and `st status --json` print the stack as a JSON tree; `st split describe`, `st split apply --json` and `st exec --json` print JSON too.
+- `st log --json` and `st status --json` print the stack as a JSON tree; `st split describe`, `st split apply --json`, `st exec --json`, `st sync --json`, `st graph import --json`, `st version --json` and `st update --json` print JSON too.
 - Help goes to standard output and exits 0. A command that fails exits 1 with the reason on standard error, followed by its usage if it was invoked wrongly.
 - `st switch`, `st backup clean`, and `st attach` without `--parent` or `--auto` are interactive. The help of each names the non-interactive alternative.
 - `st skill install` installs a skill that tells an agent when to reach for `st` and to start from `st help`.

@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 	os.Remove(stBinary)
+	removeStampedBinaries()
 	os.Exit(code)
 }
 

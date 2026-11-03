@@ -1,6 +1,9 @@
 # Binary
 /st
 
+# Release builds (task release:dist)
+/dist/
+
 # Test binaries
 *.test
 

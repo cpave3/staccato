@@ -100,6 +100,8 @@ one below them changes. Commit with git as usual.`,
 	rootCmd.AddCommand(restoreCmd())
 	rootCmd.AddCommand(graphCmd())
 	rootCmd.AddCommand(skillCmd())
+	rootCmd.AddCommand(versionCmd())
+	rootCmd.AddCommand(updateCmd())
 
 	explainMisuse(rootCmd)
 }

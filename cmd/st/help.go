@@ -312,6 +312,27 @@ pull request from the current branch into its parent: run it on each branch,
 from the bottom of the stack up. These need a remote named ` + "`origin`" + `, and pull
 requests need the GitHub CLI (` + "`gh`" + `).
 
+A branch the remote refuses (a protected branch, a push held for approval)
+is named with git's reason after the others are pushed, and ` + "`st sync`" + ` then
+exits 1. ` + "`st sync --json`" + ` lists such branches under ` + "`failed_pushes`" + `.
+
+## Move a stack to another clone
+
+The graph lives in one clone. To carry on with a stack elsewhere, such as on
+the person's machine after an agent built it on another, push it and export
+its graph, then import the document in the other clone:
+
+` + "```bash" + `
+st sync
+st graph export --output stack.json
+st graph import stack.json
+` + "```" + `
+
+The import fetches the branches, creates the missing ones, fast-forwards
+those that are behind, and leaves alone any branch with local commits the
+document lacks, reporting it as a conflict. It exits 1 when any branch was
+not merged.
+
 ## More
 
 - Adopt a branch made outside st: ` + "`st attach <branch> --parent <parent>`" + `.
@@ -319,6 +340,7 @@ requests need the GitHub CLI (` + "`gh`" + `).
 - Split a branch that is too large to review: ` + "`st split --help`" + `.
 - Read the review feedback on the whole stack: ` + "`st reviews --help`" + `.
 - Recover after a restack went wrong: ` + "`st restore --help`" + `.
+- Check the version, and install the newest release: ` + "`st version`" + `, ` + "`st update`" + `.
 `
 
 const primerConventions = `

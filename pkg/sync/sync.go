@@ -2,6 +2,7 @@ package sync
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,12 +27,29 @@ type Result struct {
 	TrunkUpdated             bool
 	MergedBranches           []string
 	PushedBranches           []string
+	FailedPushes             []FailedPush
 	RestackedCount           int
 	Conflicts                bool
 	ConflictsAt              string
 	StashedFromBranch        string // non-empty if we stashed uncommitted changes from a merged branch
 	DeferredBranchDeletions  []string
 	CompletedBranchDeletions []string
+}
+
+// FailedPush is a branch, or the shared graph ref, that could not be pushed.
+type FailedPush struct {
+	Branch string `json:"branch"`
+	// Reason is git's line saying why, such as "! [remote rejected] x -> x (…)".
+	Reason string `json:"reason"`
+}
+
+// pushFailure turns a failed push into a FailedPush for ref.
+func pushFailure(ref string, err error) FailedPush {
+	var pushErr *git.PushError
+	if errors.As(err, &pushErr) {
+		return FailedPush{Branch: ref, Reason: pushErr.Reason}
+	}
+	return FailedPush{Branch: ref, Reason: err.Error()}
 }
 
 const pendingCleanupFilename = "pending-branch-cleanup.json"
@@ -217,15 +235,19 @@ func Run(sc *stcontext.StaccatoContext, opts Options) (*Result, error) {
 			if branch == trunk {
 				continue
 			}
-			if err := gitRunner.Push(branch, true); err == nil {
-				result.PushedBranches = append(result.PushedBranches, branch)
+			if err := gitRunner.Push(branch, true); err != nil {
+				result.FailedPushes = append(result.FailedPushes, pushFailure(branch, err))
+				continue
 			}
+			result.PushedBranches = append(result.PushedBranches, branch)
 		}
 	}
 
 	// 8. Push shared graph ref if in shared mode
 	if !opts.DownOnly && sc.IsShared() {
-		gitRunner.PushRef(sc.SharedRef())
+		if err := gitRunner.PushRef(sc.SharedRef()); err != nil {
+			result.FailedPushes = append(result.FailedPushes, pushFailure(sc.SharedRef(), err))
+		}
 	}
 
 	// 9. Restore original branch if it still exists

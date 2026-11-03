@@ -19,6 +19,8 @@ st/
 │   ├── backup.go, restore.go, log.go, status.go, pr.go
 │   ├── split.go           # split describe/apply (thin wrapper over pkg/split)
 │   ├── exec.go            # exec command (thin wrapper over pkg/stackexec)
+│   ├── graph_transfer.go  # graph export/import (thin wrapper over pkg/transfer)
+│   ├── version.go, update.go  # st version, st update (pkg/version, pkg/selfupdate)
 │   ├── help.go            # help pages, 'st help' agent primer, usage errors
 │   └── *_test.go          # E2E + TUI model tests by command/behavior
 ├── internal/testutil/
@@ -31,9 +33,14 @@ st/
 │   ├── attach/            # Lazy attachment logic
 │   ├── split/             # Split one branch into stacked branches from a plan
 │   ├── stackexec/         # Run a command on every branch of a lineage
+│   ├── transfer/          # Graph export document and per-branch import merge
+│   ├── version/           # The binary's version (stamped at release build)
+│   ├── selfupdate/        # Find the newest GitHub release and install it
 │   ├── forge/             # Forge detection (GitHub, etc.)
 │   ├── hooks/             # Hook discovery & execution engine
 │   └── output/            # CLI formatting utilities
+├── scripts/next-version.sh  # Next release tag (used by the release workflow)
+├── .github/workflows/release.yml  # Manual release: tag, test, build, publish
 ├── .golangci.yml          # Linter config (govet, staticcheck, unused, ineffassign)
 ├── Taskfile.yml           # Task runner (task build/test/lint/check)
 ├── go.mod
@@ -100,6 +107,19 @@ st/
 - Branches are visited parents-first with siblings in name order (`lineage`), because `Graph.GetChildren` iterates a map
 - Same mechanism as `--exec` in `pkg/split/verify.go`, but separate code: a fix to process or signal handling in one probably belongs in the other too
 
+#### pkg/transfer
+- `cmd/st/graph_transfer.go` is a thin wrapper over it
+- `Document` (`format`, `kind`, `root`, ordered `branches`) is an exchange format, not storage: it is not `graph.json`. Raise `Format` only for a change an older st cannot read; `Decode` refuses a newer format and ignores unknown fields
+- `Export(sc, opts)`: the current stack (bottom branch up), `--branch`, or `--all`; head is git's tip, which must equal `<remote>/<name>` unless `AllowUnpushed`
+- `Plan(sc, doc, opts)`: validates names with `git check-ref-format` before anything reaches git (the document comes from another machine), fetches, checks commits, decides each branch's `Outcome` from git ancestry (never from the graphs' save counters), cascades `skipped` to children of unmerged parents, refuses cycles. Changes nothing but remote-tracking refs
+- `Apply(sc, plan)`: `merge --ff-only` for the checked-out branch first (a refusal re-decides with it skipped), then one `update-ref --stdin` transaction with expected old values, then one `sc.Save()` (local or shared)
+- Shared mode's `sync.ReconcileGraphs` is separate and unchanged
+
+#### pkg/version and pkg/selfupdate
+- `version.stamped` is set by `-ldflags -X github.com/cpave3/staccato/pkg/version.stamped=vX.Y.Z` in `task build:release`. Only a stamped `vX.Y.Z` is a release (`IsRelease`); a `go install …@vX.Y.Z` build reports its module version but is not a release; anything else is `dev`
+- `selfupdate` is adapted from Legato's `internal/engine/selfupdate`: keep the two the same shape so a fix carries across. `st update` is the only command that contacts GitHub; tests point it at an `httptest` server with `ST_RELEASES_API`
+- E2E tests of `st update` must run a copy of a stamped build in a temp dir, never the shared test binary, which it would replace
+
 #### pkg/hooks
 - `Event` type with constants: `PostPRCreate`, `PostPRView`, `PostBranchCreate`, `PostBranchDelete`, `PostRestack`, `PostRestackConflict`, `PostSync`, `PostAttach`, `PreSync`, `PreRestack`
 - `Context` struct: `Event`, `RepoPath`, `Branch`, `Data map[string]any` — marshalled as JSON to hook stdin
@@ -140,17 +160,21 @@ Both `attachTUI` and `switchTUI` in `cmd/st/`:
 | `continue` | Resume restack after conflict | — |
 | `attach [branch]` | Adopt branch into stack (TUI or auto) | `--auto`, `--parent` |
 | `restore [branch]` | Restore from automatic backup | `--all` |
-| `sync` | Push to remote | `--dry-run` |
+| `sync` | Fetch, drop merged, restack, push; refused pushes exit 1 | `--dry-run`, `--down`, `--json` |
 | `backup` | Manual snapshot of all stack branches | — |
 | `log` | Display stack tree | `--json` |
 | `switch` | Interactive branch selector (TUI) | — |
 | `split describe [branch]` | JSON inventory of a branch for planning a split | — |
 | `split apply <plan.json\|->` | Split a branch into stacked branches from a JSON plan | `--dry-run`, `--exec`, `--json` |
 | `exec <command>` | Run a command on every branch of the current lineage, report pass/fail per branch | `--fail-fast`, `--json` |
+| `version` | Print the version (`dev` for a build from source) | `--json` |
+| `update` | Install the newest release over the running binary | `--check`, `--json` |
 
 | `graph share` | Move graph to shared git ref | — |
 | `graph local` | Move graph back to local file | — |
 | `graph which` | Show current storage mode | — |
+| `graph export` | Write a stack's graph as a document for another clone | `--branch`, `--all`, `--output`, `--remote`, `--allow-unpushed` |
+| `graph import <file\|->` | Merge a graph document into this clone's graph | `--remote`, `--no-fetch`, `--dry-run`, `--json` |
 
 ### Help
 
@@ -238,6 +262,12 @@ go build -o st ./cmd/st/
 go test ./... -count=1
 golangci-lint run ./...
 ```
+
+## Releases
+
+- `gh workflow run release -f bump=patch|minor|major` on `main`: the next version is the newest `vX.Y.Z` tag bumped (`scripts/next-version.sh`); the workflow vets and tests, runs `task release:dist VERSION=<v>` (linux/amd64, linux/arm64, darwin/arm64 into `dist/st-<os>-<arch>` plus `SHA256SUMS`), checks the binary reports the version, attests provenance and publishes with `gh release create`. The tag is the version; nothing is committed back
+- Asset names carry no version, so `releases/latest/download/st-linux-amd64` is always the newest
+- Binaries are built with `CGO_ENABLED=0`; keep it that way
 
 ## Dependencies
 
