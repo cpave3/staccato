@@ -2,6 +2,8 @@
 
 This specification covers how Staccato persists and manages the stack graph, including the two storage modes (local file and shared git ref), the commands to switch between them, and the graph data model itself.
 
+Moving a stack's graph between clones, as a document rather than through the shared ref, is covered by the graph-transfer specification (`st graph export`, `st graph import`).
+
 ## Storage Modes
 
 ### Requirement: Local Storage Mode

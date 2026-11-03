@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -635,4 +636,78 @@ func TestGitRunner_CherryPickTree(t *testing.T) {
 			t.Errorf("conflicted pick returned tree %q", pick.Tree)
 		}
 	})
+}
+
+// rejectPushesOf installs a pre-receive hook in bareDir that refuses any push
+// to the named branch, saying so on standard error.
+func rejectPushesOf(t *testing.T, bareDir, branch string) {
+	t.Helper()
+	hook := filepath.Join(bareDir, "hooks", "pre-receive")
+	script := "#!/bin/sh\nwhile read old new ref; do\n  if [ \"$ref\" = \"refs/heads/" + branch + "\" ]; then\n    echo \"held for approval\" >&2\n    exit 1\n  fi\ndone\n"
+	if err := os.WriteFile(hook, []byte(script), 0755); err != nil {
+		t.Fatalf("write hook: %v", err)
+	}
+}
+
+func TestGitRunner_Push_RefusedPushNamesGitsReason(t *testing.T) {
+	tmpDir, runner := initRepoWithRemote(t)
+	bareDir, _ := exec.Command("git", "-C", tmpDir, "remote", "get-url", "origin").Output()
+	rejectPushesOf(t, strings.TrimSpace(string(bareDir)), "feature")
+
+	exec.Command("git", "-C", tmpDir, "checkout", "-b", "feature").Run()
+	os.WriteFile(filepath.Join(tmpDir, "feat.txt"), []byte("feat"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "feature commit").Run()
+
+	err := runner.Push("feature", true)
+
+	var pushErr *PushError
+	if !errors.As(err, &pushErr) {
+		t.Fatalf("Push error = %v, want a *PushError", err)
+	}
+	if pushErr.Ref != "feature" {
+		t.Errorf("Ref = %q, want feature", pushErr.Ref)
+	}
+	if !strings.HasPrefix(pushErr.Reason, "! [remote rejected]") || !strings.Contains(pushErr.Reason, "feature") {
+		t.Errorf("Reason = %q, want git's [remote rejected] line for feature", pushErr.Reason)
+	}
+}
+
+func TestPushReason(t *testing.T) {
+	cases := []struct {
+		name, stderr, want string
+	}{
+		{
+			"ref status line wins over the generic error",
+			"remote: held for approval\nTo /tmp/origin\n ! [remote rejected] x -> x (pending ap-1)\nerror: failed to push some refs to '/tmp/origin'\n",
+			"! [remote rejected] x -> x (pending ap-1)",
+		},
+		{
+			"stale lease with hints",
+			"To /tmp/origin\n ! [rejected]        x -> x (stale info)\nerror: failed to push some refs to '/tmp/origin'\nhint: Updates were rejected\nhint: more advice\n",
+			"! [rejected]        x -> x (stale info)",
+		},
+		{
+			"fatal line when no ref was reported",
+			"fatal: unable to access 'https://example.com/': Could not resolve host\n",
+			"fatal: unable to access 'https://example.com/': Could not resolve host",
+		},
+		{
+			"last remote line when nothing better",
+			"remote: first\nremote: proxy refused this push\nerror: failed to push some refs to 'x'\n",
+			"remote: proxy refused this push",
+		},
+		{
+			"last non-empty line otherwise",
+			"something odd\n\n",
+			"something odd",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := PushReason(c.stderr); got != c.want {
+				t.Errorf("PushReason = %q, want %q", got, c.want)
+			}
+		})
+	}
 }

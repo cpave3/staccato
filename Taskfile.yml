@@ -6,6 +6,27 @@ tasks:
     cmds:
       - go build -o st ./cmd/st/
 
+  build:release:
+    desc: Build one release binary stamped with VERSION, for GOOS and GOARCH
+    requires:
+      vars: [VERSION]
+    # Without C: one static binary that runs on any Linux, and cross-compiles
+    # with GOOS and GOARCH alone.
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -trimpath -ldflags "-s -w -X github.com/cpave3/staccato/pkg/version.stamped={{.VERSION}}" -o {{.OUTPUT | default "st"}} ./cmd/st/
+
+  release:dist:
+    desc: Build every release binary for VERSION into dist/, with SHA256SUMS (what the release workflow publishes)
+    requires:
+      vars: [VERSION]
+    cmds:
+      - rm -rf dist && mkdir -p dist
+      - for: [linux/amd64, linux/arm64, darwin/arm64]
+        cmd: GOOS={{splitList "/" .ITEM | first}} GOARCH={{splitList "/" .ITEM | last}} task build:release VERSION={{.VERSION}} OUTPUT=dist/st-{{splitList "/" .ITEM | first}}-{{splitList "/" .ITEM | last}}
+      - cd dist && sha256sum st-* > SHA256SUMS
+
   test:
     desc: Run all tests
     cmds:

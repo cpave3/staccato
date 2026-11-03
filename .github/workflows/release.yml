@@ -1,0 +1,72 @@
+# Makes a release of st: the next version (the newest vX.Y.Z tag, bumped),
+# tested, built for every platform, and published as a GitHub release that
+# 'st update' installs. The tag is the version; nothing is committed back.
+#
+#   gh workflow run release -f bump=patch
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write # the tag and the release
+  id-token: write # build provenance
+  attestations: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # every tag, to find the newest release
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Next version
+        id: version
+        run: echo "version=$(bash scripts/next-version.sh '${{ inputs.bump }}')" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+
+      - name: Build
+        run: task release:dist VERSION='${{ steps.version.outputs.version }}'
+
+      - name: Check the build reports its version
+        run: |
+          got="$(dist/st-linux-amd64 version)"
+          test "$got" = "st ${{ steps.version.outputs.version }}" || { echo "built binary says: $got"; exit 1; }
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/st-*
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" dist/st-* dist/SHA256SUMS \
+            --target "$GITHUB_SHA" --title "$VERSION" --generate-notes

@@ -168,14 +168,82 @@ func (r *Runner) BranchExists(name string) (bool, error) {
 	return err == nil, nil
 }
 
-// Push pushes the current branch to the remote
+// PushError is a push that git refused or could not make.
+type PushError struct {
+	// Ref is the branch or ref that was pushed.
+	Ref string
+	// Reason is the line of git's output that says why (see PushReason).
+	Reason string
+	// Output is everything git wrote to standard error.
+	Output string
+	err    error
+}
+
+func (e *PushError) Error() string {
+	return fmt.Sprintf("push of %s failed: %s", e.Ref, e.Reason)
+}
+
+func (e *PushError) Unwrap() error { return e.err }
+
+// PushReason picks the line of a failed push's standard error that says why
+// it failed: the status line git printed for the refused ref ("! [remote
+// rejected] x -> x (…)"), else the last fatal:, error: or remote: line other
+// than git's generic "failed to push some refs", else the last non-empty line.
+func PushReason(stderr string) string {
+	var lines []string
+	for _, line := range strings.Split(stderr, "\n") {
+		// Progress rewrites one line with carriage returns; keep its last form.
+		if i := strings.LastIndex(line, "\r"); i >= 0 {
+			line = line[i+1:]
+		}
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "!") {
+			return lines[i]
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if strings.HasPrefix(line, "error: failed to push some refs") {
+			continue
+		}
+		if strings.HasPrefix(line, "fatal:") || strings.HasPrefix(line, "error:") || strings.HasPrefix(line, "remote:") {
+			return line
+		}
+	}
+	if len(lines) > 0 {
+		return lines[len(lines)-1]
+	}
+	return ""
+}
+
+// push runs git push with args and returns a *PushError naming ref when it fails.
+func (r *Runner) push(ref string, args ...string) error {
+	cmd := exec.Command("git", append([]string{"push"}, args...)...)
+	cmd.Dir = r.repoPath
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		reason := PushReason(stderr.String())
+		if reason == "" {
+			reason = err.Error()
+		}
+		return &PushError{Ref: ref, Reason: reason, Output: stderr.String(), err: err}
+	}
+	return nil
+}
+
+// Push pushes a branch to origin with upstream tracking. A failure is a
+// *PushError with git's reason.
 func (r *Runner) Push(branch string, force bool) error {
-	args := []string{"push", "-u", "origin", branch}
+	args := []string{"-u", "origin", branch}
 	if force {
 		args = append(args, "--force-with-lease")
 	}
-	_, err := r.Run(args...)
-	return err
+	return r.push(branch, args...)
 }
 
 // PushAll pushes all branches in the stack to the remote
@@ -440,10 +508,10 @@ func (r *Runner) DeleteRef(ref string) error {
 	return err
 }
 
-// PushRef pushes a single ref to origin (force, since it's mutable state)
+// PushRef pushes a single ref to origin (force, since it's mutable state). A
+// failure is a *PushError with git's reason.
 func (r *Runner) PushRef(ref string) error {
-	_, err := r.Run("push", "origin", ref+":"+ref, "--force")
-	return err
+	return r.push(ref, "origin", ref+":"+ref, "--force")
 }
 
 // FetchRef fetches a single ref from origin. Returns error on failure.

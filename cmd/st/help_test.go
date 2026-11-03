@@ -257,7 +257,8 @@ func checkExample(t *testing.T, example string) {
 		if word == "--" {
 			break
 		}
-		if !strings.HasPrefix(word, "-") {
+		// A lone "-" is an operand meaning standard input, not a flag.
+		if word == "-" || !strings.HasPrefix(word, "-") {
 			// 'st exec' hands everything after the command's first word to it.
 			if cmd.Name() == "exec" {
 				break

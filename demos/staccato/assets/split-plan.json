@@ -1,0 +1,26 @@
+{
+  "branch": "feature/orders",
+  "head": "1ebeb53660dd9d69433064667bb2f37cdc4a532a",
+  "slices": [
+    {
+      "name": "feature/api",
+      "message": "Add order API",
+      "paths": [
+        "api.go",
+        "api_test.go"
+      ]
+    },
+    {
+      "name": "feature/validation",
+      "message": "Validate quantities",
+      "paths": [
+        "validation.go"
+      ]
+    },
+    {
+      "name": "feature/orders",
+      "message": "Add order UI",
+      "rest": true
+    }
+  ]
+}

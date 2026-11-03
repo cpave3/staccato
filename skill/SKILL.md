@@ -32,6 +32,8 @@ st pr make --title "..." --description "..."    # pull request into the parent b
 st attach <branch> --parent <parent>            # adopt a branch made outside st
 st exec "<build command>"     # which branches of the stack build?
 st split --help               # split a branch that is too large to review
+st graph export --output stack.json   # after st sync: hand the stack to another clone
+st graph import stack.json    # in the other clone: fetch and merge the stack
 ```
 
 ## What to keep in mind
@@ -42,4 +44,5 @@ st split --help               # split a branch that is too large to review
 - **A conflict pauses the restack.** Resolve the files, `git add` them, `st continue`. It can stop again on a later branch.
 - **Use the non-interactive forms.** `st switch`, `st backup clean`, and `st attach` without `--parent` or `--auto` open a terminal UI. Use `git checkout <branch>` and `st attach --parent` instead. Pass `--title` and `--description` to `st pr make`, or `gh` will prompt.
 - **`st exec` checks branches; it does not change them.** Fix a failing branch by checking it out and committing, then restack.
+- **A refused push fails `st sync`.** It exits 1 and names the branch with git's reason; a push held for approval says so (`pending`). Wait or ask, then sync again.
 - **Splitting is a plan, not surgery.** `st split describe`, write a JSON plan, `st split apply plan.json --dry-run`, then apply. Never reset, stage or cherry-pick by hand to split a branch.

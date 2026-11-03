@@ -13,9 +13,11 @@ import (
 func graphCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "graph",
-		Short: "Store, share and repair the stack graph",
+		Short: "Store, share, move and repair the stack graph",
 		Long: `The graph is st's record of which branch is stacked on which, with the commit
-each branch was last based on. It is kept in a file inside .git unless shared.`,
+each branch was last based on. It is kept in a file inside .git unless shared.
+'st graph export' and 'st graph import' carry a stack's graph to another
+clone, such as from an agent's machine to yours.`,
 		Example: `st graph which
 st graph share
 st graph repair --dry-run`,
@@ -24,6 +26,8 @@ st graph repair --dry-run`,
 	cmd.AddCommand(graphLocalCmd())
 	cmd.AddCommand(graphWhichCmd())
 	cmd.AddCommand(graphRepairCmd())
+	cmd.AddCommand(graphExportCmd())
+	cmd.AddCommand(graphImportCmd())
 	return cmd
 }
 

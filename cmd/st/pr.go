@@ -2,21 +2,27 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/cpave3/staccato/pkg/forge"
+	"github.com/cpave3/staccato/pkg/graph"
 	"github.com/cpave3/staccato/pkg/hooks"
+	"github.com/cpave3/staccato/pkg/restack"
 	"github.com/spf13/cobra"
 )
 
 func prCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr",
-		Short: "Create and view pull requests",
+		Short: "Create, view and list pull requests",
 		Example: `st pr make --title "feat: add order API" --description "Adds the order API."
-st pr view`,
+st pr view
+st pr list`,
 	}
 	cmd.AddCommand(prMakeCmd())
 	cmd.AddCommand(prViewCmd())
+	cmd.AddCommand(prListCmd())
 	return cmd
 }
 
@@ -138,4 +144,99 @@ st pr view --web`,
 
 	cmd.Flags().BoolVarP(&web, "web", "w", false, "Open the pull request in the browser")
 	return cmd
+}
+
+func prListCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List the pull request link of each branch in the stack",
+		Long: `Prints one line for each branch of the current lineage, from the bottom of the
+stack up: the branch name, then the address of its pull request, or "No PR"
+when it has none. A pull request that was merged or closed is marked
+(merged) or (closed).
+
+For the stack tree with each pull request's review and check status, use
+'st status'; 'st status --json' gives the same addresses as JSON.
+
+Needs a GitHub remote named origin and the GitHub CLI (gh), signed in.`,
+		Example: `st pr list`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			g, gitRunner, _, _, err := getContext()
+			if err != nil {
+				return err
+			}
+
+			if err := requireBranch(gitRunner); err != nil {
+				return err
+			}
+
+			currentBranch, err := gitRunner.GetCurrentBranch()
+			if err != nil {
+				return fmt.Errorf("failed to get current branch: %w", err)
+			}
+
+			if _, tracked := g.GetBranch(currentBranch); !tracked && currentBranch != g.Root {
+				return fmt.Errorf("branch '%s' is not in the stack — run 'st attach' first", currentBranch)
+			}
+
+			branches := prLineage(g, currentBranch)
+			if len(branches) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "no branches in the stack")
+				return nil
+			}
+
+			f, err := forge.Detect(gitRunner)
+			if err != nil {
+				return err
+			}
+
+			prStatus, err := f.StackStatus(branches)
+			if err != nil {
+				return err
+			}
+
+			printPRList(cmd.OutOrStdout(), branches, prStatus)
+			return nil
+		},
+	}
+	return cmd
+}
+
+// prLineage returns the branches of branch's lineage that can have a pull
+// request, from the bottom of the stack up, with siblings in name order.
+func prLineage(g *graph.Graph, branch string) []string {
+	var branches []string
+	for _, name := range restack.GetAncestors(g, branch) {
+		if name != g.Root {
+			branches = append(branches, name)
+		}
+	}
+	var descend func(parent string)
+	descend = func(parent string) {
+		for _, child := range childNames(g, parent) {
+			branches = append(branches, child)
+			descend(child)
+		}
+	}
+	descend(branch)
+	return branches
+}
+
+// printPRList prints one line per branch: its name, then its pull request's
+// address, or "No PR" when it has none.
+func printPRList(w io.Writer, branches []string, prStatus map[string]*forge.PRStatusInfo) {
+	width := 0
+	for _, b := range branches {
+		width = max(width, len(b))
+	}
+	for _, b := range branches {
+		link := "No PR"
+		if info, ok := prStatus[b]; ok && info.HasPR {
+			link = info.URL
+			if info.State != "OPEN" {
+				link += " (" + strings.ToLower(info.State) + ")"
+			}
+		}
+		fmt.Fprintf(w, "%s%s  %s\n", b, strings.Repeat(" ", width-len(b)), link)
+	}
 }
